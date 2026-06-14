@@ -7,10 +7,9 @@ import {
   ArrowLeft,
   Filter,
   X,
-  Calendar,
   AlertTriangle,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,9 +20,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { tasks, members, projects } from "@/lib/mock-data";
-import { cn, formatDate, getInitials } from "@/lib/utils";
-import type { Task } from "@/types";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
+import { cn, getInitials } from "@/lib/utils";
 
 type KanbanColumn = {
   id: string;
@@ -71,12 +70,17 @@ export default function KanbanPage() {
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
 
+  const { data: tasks, loading: tasksLoading } = useFirestoreQuery(COLLECTIONS.TASKS);
+  const { data: members } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { data: projects } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { update: updateTask } = useFirestoreActions(COLLECTIONS.TASKS);
+
   const uniqueAssignees = useMemo(() => {
     const ids = Array.from(new Set(tasks.map((t) => t.assigneeId)));
     return ids.map((id) => members.find((m) => m.id === id)).filter(Boolean);
-  }, []);
+  }, [tasks, members]);
 
-  const uniquePriorities = useMemo(() => Array.from(new Set(tasks.map((t) => t.priority))), []);
+  const uniquePriorities = useMemo(() => Array.from(new Set(tasks.map((t) => t.priority))), [tasks]);
 
   const filteredTasks = useMemo(() => {
     let result = [...tasks];
@@ -87,17 +91,29 @@ export default function KanbanPage() {
       result = result.filter((t) => t.priority === priorityFilter);
     }
     return result;
-  }, [assigneeFilter, priorityFilter]);
+  }, [tasks, assigneeFilter, priorityFilter]);
 
   const tasksByColumn = useMemo(() => {
-    const grouped: Record<string, Task[]> = {};
+    const grouped: Record<string, typeof tasks> = {};
     columns.forEach((col) => {
       grouped[col.id] = filteredTasks.filter((t) => t.status === col.id);
     });
     return grouped;
   }, [filteredTasks]);
 
+  const handleMoveTask = async (taskId: string, newStatus: string) => {
+    await updateTask(taskId, { status: newStatus });
+  };
+
   const hasFilters = assigneeFilter !== "all" || priorityFilter !== "all";
+
+  if (tasksLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
@@ -243,19 +259,18 @@ export default function KanbanPage() {
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
-                                <Badge
-                                  variant={task.priority === "critical" ? "danger" : task.priority === "high" ? "warning" : "outline"}
-                                  className="text-[9px] px-1 py-0"
-                                >
-                                  {priorityLabel[task.priority]}
-                                </Badge>
-                                <span className={cn(
-                                  "flex items-center gap-1 text-[10px]",
-                                  isOverdue ? "text-danger font-medium" : "text-muted"
-                                )}>
-                                  <Calendar className="h-2.5 w-2.5" />
-                                  {formatDate(task.dueDate)}
-                                </span>
+                                <Select value={task.status} onValueChange={(val) => handleMoveTask(task.id, val)}>
+                                  <SelectTrigger className="h-6 w-[100px] text-[9px] px-1.5" onClick={(e) => e.stopPropagation()}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {columns.map((col) => (
+                                      <SelectItem key={col.id} value={col.id} className="text-[10px]">
+                                        {col.title}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
                           </CardContent>

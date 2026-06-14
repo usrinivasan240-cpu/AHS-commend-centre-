@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Bot,
@@ -16,12 +16,14 @@ import {
   Sparkles,
   TrendingUp,
   MessageSquare,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { aiInsights } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn } from "@/lib/utils";
 
 const fadeInUp = {
@@ -85,48 +87,19 @@ const aiFeatures = [
   },
 ];
 
-const recentActivity = [
-  {
-    id: 1,
-    feature: "Business Assistant",
-    query: "Which projects are delayed?",
-    time: "2 hours ago",
-    icon: Bot,
-    color: "text-primary",
-  },
-  {
-    id: 2,
-    feature: "Assessment Generator",
-    query: "Generated React MCQ assessment with 20 questions",
-    time: "5 hours ago",
-    icon: FileCheck,
-    color: "text-secondary",
-  },
-  {
-    id: 3,
-    feature: "Project Estimator",
-    query: "Estimated Mobile App MVP - 3 months, 4 devs",
-    time: "1 day ago",
-    icon: Calculator,
-    color: "text-warning",
-  },
-  {
-    id: 4,
-    feature: "Business Assistant",
-    query: "Revenue summary for Q3",
-    time: "1 day ago",
-    icon: Bot,
-    color: "text-primary",
-  },
-  {
-    id: 5,
-    feature: "Training Assistant",
-    query: "Recommended learning path for Frontend team",
-    time: "2 days ago",
-    icon: GraduationCap,
-    color: "text-accent",
-  },
-];
+const featureIcons: Record<string, typeof Bot> = {
+  "Business Assistant": Bot,
+  "Assessment Generator": FileCheck,
+  "Project Estimator": Calculator,
+  "Training Assistant": GraduationCap,
+};
+
+const featureColors: Record<string, string> = {
+  "Business Assistant": "text-primary",
+  "Assessment Generator": "text-secondary",
+  "Project Estimator": "text-warning",
+  "Training Assistant": "text-accent",
+};
 
 const aiTips = [
   {
@@ -184,6 +157,82 @@ const insightColors = {
 };
 
 export default function AICenterPage() {
+  const { data: projects, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: users, loading: usersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+  const loading = projectsLoading || usersLoading;
+
+  const aiInsights = useMemo(() => {
+    const insights: { id: string; type: "warning" | "success" | "recommendation" | "info"; title: string; description: string; metric?: string }[] = [];
+
+    const delayedProjects = projects.filter((p: any) => p.status === "delayed");
+    if (delayedProjects.length > 0) {
+      insights.push({
+        id: "delayed",
+        type: "warning",
+        title: "Project Delayed",
+        description: `${delayedProjects.length} project(s) are delayed. Consider reallocating resources.`,
+        metric: `${delayedProjects.length} delayed`,
+      });
+    }
+
+    const activeProjects = projects.filter((p: any) => p.status === "in-progress");
+    if (activeProjects.length > 0) {
+      insights.push({
+        id: "active",
+        type: "info",
+        title: "Active Projects",
+        description: `${activeProjects.length} project(s) currently in progress across the organization.`,
+        metric: `${activeProjects.length} active`,
+      });
+    }
+
+    const topPerformers = [...users].sort((a: any, b: any) => (b.performanceScore || 0) - (a.performanceScore || 0)).slice(0, 3);
+    if (topPerformers.length > 0) {
+      insights.push({
+        id: "top-performers",
+        type: "success",
+        title: "Top Performers",
+        description: `${topPerformers[0]?.name} leads with ${topPerformers[0]?.performanceScore}% score. ${users.length} team members total.`,
+        metric: `${topPerformers[0]?.performanceScore}%`,
+      });
+    }
+
+    const lowPerformers = users.filter((u: any) => (u.performanceScore || 0) < 70);
+    if (lowPerformers.length > 0) {
+      insights.push({
+        id: "low-performers",
+        type: "recommendation",
+        title: "Mentorship Needed",
+        description: `${lowPerformers.length} member(s) scored below 70. Pair with seniors for mentorship.`,
+        metric: `${lowPerformers.length} need support`,
+      });
+    }
+
+    const completedProjects = projects.filter((p: any) => p.status === "completed");
+    if (projects.length > 0) {
+      const successRate = Math.round((completedProjects.length / projects.length) * 100);
+      insights.push({
+        id: "success-rate",
+        type: "success",
+        title: "Project Success",
+        description: `${successRate}% project completion rate. ${completedProjects.length} of ${projects.length} projects completed.`,
+        metric: `${successRate}%`,
+      });
+    }
+
+    return insights;
+  }, [projects, users]);
+
+  const recentActivity = useMemo(() => {
+    return projects.slice(0, 5).map((p: any) => ({
+      id: p.id,
+      feature: "Business Assistant",
+      query: `${p.name} - ${p.status.replace(/-/g, " ")}`,
+      time: p.startDate || "Recent",
+      icon: featureIcons["Business Assistant"],
+      color: featureColors["Business Assistant"],
+    }));
+  }, [projects]);
   return (
     <motion.div
       initial="initial"
@@ -205,6 +254,13 @@ export default function AICenterPage() {
           </div>
         </div>
       </motion.div>
+
+      {loading && (
+        <motion.div variants={fadeInUp} className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+          <span className="ml-3 text-muted">Loading AI Center data...</span>
+        </motion.div>
+      )}
 
       {/* AI Features Grid */}
       <motion.div
@@ -271,7 +327,7 @@ export default function AICenterPage() {
             <CardContent>
               <div className="space-y-3">
                 {recentActivity.map((activity) => {
-                  const Icon = activity.icon;
+                  const Icon = activity.icon || Bot;
                   return (
                     <div
                       key={activity.id}

@@ -16,6 +16,7 @@ import {
   Calendar,
   ChevronRight,
   Upload,
+  Loader2,
 } from "lucide-react";
 import {
   Card,
@@ -38,7 +39,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { projects, invoices } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 
 const fadeInUp = {
@@ -54,14 +56,6 @@ const staggerContainer = {
     },
   },
 };
-
-const clientProjects = projects.filter(
-  (p) => p.clientName === "RetailCorp" || p.clientName === "TechServe"
-);
-
-const clientInvoices = invoices.filter(
-  (i) => i.clientId === "1" || i.clientId === "2"
-);
 
 const deliverables = [
   {
@@ -149,33 +143,6 @@ const documents = [
   },
 ];
 
-const supportTickets = [
-  {
-    id: "TKT-001",
-    title: "Payment page not loading on mobile",
-    priority: "high",
-    status: "in-progress",
-    createdAt: "2024-08-14",
-    messages: 3,
-  },
-  {
-    id: "TKT-002",
-    title: "Need access to staging environment",
-    priority: "medium",
-    status: "resolved",
-    createdAt: "2024-08-10",
-    messages: 5,
-  },
-  {
-    id: "TKT-003",
-    title: "Logo color discrepancy in footer",
-    priority: "low",
-    status: "open",
-    createdAt: "2024-08-15",
-    messages: 1,
-  },
-];
-
 const statusColors: Record<string, string> = {
   completed: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
   "in-progress": "bg-primary/20 text-primary border-primary/30",
@@ -193,6 +160,18 @@ const priorityColors: Record<string, string> = {
 };
 
 export default function ClientPortalPage() {
+  const { data: allProjects, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: allClients, loading: clientsLoading } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+  const { data: allInvoices, loading: invoicesLoading } = useFirestoreQuery(COLLECTIONS.INVOICES);
+  const { add: addNotification } = useFirestoreActions(COLLECTIONS.NOTIFICATIONS);
+  const { data: notifications } = useFirestoreQuery(COLLECTIONS.NOTIFICATIONS);
+  const loading = projectsLoading || clientsLoading || invoicesLoading;
+
+  const supportTickets = useMemo(
+    () => notifications.filter((n: any) => n.type === "system" && n.title?.startsWith("Support:")),
+    [notifications]
+  );
+
   const [activeTab, setActiveTab] = useState("projects");
   const [ticketForm, setTicketForm] = useState({
     title: "",
@@ -200,10 +179,36 @@ export default function ClientPortalPage() {
     priority: "medium",
   });
 
-  const totalRevenue = useMemo(
-    () => clientInvoices.reduce((sum, i) => sum + i.amount, 0),
-    []
+  const clientProjects = useMemo(
+    () => allProjects.filter((p: any) => p.clientName),
+    [allProjects]
   );
+
+  const clientInvoices = useMemo(
+    () => allInvoices.filter((i: any) => i.clientId),
+    [allInvoices]
+  );
+
+  const totalRevenue = useMemo(
+    () => clientInvoices.reduce((sum: number, i: any) => sum + (i.amount || 0), 0),
+    [clientInvoices]
+  );
+
+  const handleTicketSubmit = async () => {
+    if (!ticketForm.title || !ticketForm.description) return;
+    try {
+      await addNotification({
+        title: `Support: ${ticketForm.title}`,
+        message: ticketForm.description,
+        type: "system",
+        read: false,
+      });
+      alert("Support ticket submitted successfully!");
+      setTicketForm({ title: "", description: "", priority: "medium" });
+    } catch (err) {
+      console.error("Failed to submit ticket:", err);
+    }
+  };
 
   return (
     <motion.div
@@ -253,6 +258,14 @@ export default function ClientPortalPage() {
 
       {/* Tabs */}
       <motion.div variants={fadeInUp}>
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <span className="ml-3 text-muted">Loading client data...</span>
+          </div>
+        )}
+
+        {!loading && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="projects" className="gap-1.5">
@@ -545,7 +558,7 @@ export default function ClientPortalPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button className="w-full gap-2" onClick={() => alert('Ticket submitted!')}>
+                  <Button className="w-full gap-2" onClick={handleTicketSubmit} disabled={!ticketForm.title || !ticketForm.description}>
                     <Send className="h-4 w-4" />
                     Submit Ticket
                   </Button>
@@ -562,7 +575,10 @@ export default function ClientPortalPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {supportTickets.map((ticket) => (
+                    {supportTickets.length === 0 && (
+                      <p className="text-sm text-muted text-center py-4">No support tickets yet.</p>
+                    )}
+                    {supportTickets.map((ticket: any) => (
                       <div
                         key={ticket.id}
                         className="rounded-lg border border-border/50 p-4 transition-colors hover:bg-card-hover/30"
@@ -571,37 +587,28 @@ export default function ClientPortalPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-muted font-mono">
-                                {ticket.id}
+                                {ticket.id.slice(0, 8)}
                               </span>
                               <Badge
                                 variant="outline"
                                 className={cn(
                                   "text-[10px] capitalize",
-                                  priorityColors[ticket.priority]
+                                  ticket.read ? "bg-muted/20 text-muted border-muted/30" : "bg-primary/20 text-primary border-primary/30"
                                 )}
                               >
-                                {ticket.priority}
+                                {ticket.read ? "resolved" : "open"}
                               </Badge>
                             </div>
                             <h4 className="mt-1.5 text-sm font-medium text-white">
-                              {ticket.title}
+                              {ticket.title?.replace("Support: ", "")}
                             </h4>
                           </div>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px] capitalize shrink-0",
-                              statusColors[ticket.status]
-                            )}
-                          >
-                            {ticket.status}
-                          </Badge>
                         </div>
                         <div className="mt-3 flex items-center justify-between text-xs text-muted">
-                          <span>Created: {formatDate(ticket.createdAt)}</span>
+                          <span>Created: {ticket.createdAt ? formatDate(ticket.createdAt) : "Recent"}</span>
                           <span className="flex items-center gap-1">
                             <MessageSquare className="h-3 w-3" />
-                            {ticket.messages} messages
+                            {ticket.message ? "1 message" : "0 messages"}
                           </span>
                         </div>
                       </div>
@@ -612,6 +619,7 @@ export default function ClientPortalPage() {
             </div>
           </TabsContent>
         </Tabs>
+        )}
       </motion.div>
     </motion.div>
   );

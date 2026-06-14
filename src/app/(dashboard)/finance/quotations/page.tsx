@@ -36,9 +36,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { clients } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
-import type { Quotation, InvoiceItem } from "@/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -53,60 +53,6 @@ const staggerContainer = {
     },
   },
 };
-
-const mockQuotations: Quotation[] = [
-  {
-    id: "QTN-001",
-    clientId: "1",
-    title: "E-Commerce Platform Phase 2",
-    amount: 275000,
-    status: "sent",
-    validUntil: "2024-09-30",
-    items: [
-      { description: "Advanced Product Catalog", quantity: 1, rate: 80000, amount: 80000 },
-      { description: "Payment Gateway Integration", quantity: 1, rate: 120000, amount: 120000 },
-      { description: "Analytics Dashboard", quantity: 1, rate: 75000, amount: 75000 },
-    ],
-  },
-  {
-    id: "QTN-002",
-    clientId: "2",
-    title: "AI Chatbot Enhancement",
-    amount: 150000,
-    status: "accepted",
-    validUntil: "2024-08-31",
-    items: [
-      { description: "NLP Model Upgrade", quantity: 1, rate: 60000, amount: 60000 },
-      { description: "Multi-language Support", quantity: 1, rate: 50000, amount: 50000 },
-      { description: "Analytics & Reporting", quantity: 1, rate: 40000, amount: 40000 },
-    ],
-  },
-  {
-    id: "QTN-003",
-    clientId: "6",
-    title: "FinServe Mobile App",
-    amount: 320000,
-    status: "draft",
-    validUntil: "2024-10-15",
-    items: [
-      { description: "iOS & Android Development", quantity: 1, rate: 180000, amount: 180000 },
-      { description: "Backend API Development", quantity: 1, rate: 90000, amount: 90000 },
-      { description: "UI/UX Design", quantity: 1, rate: 50000, amount: 50000 },
-    ],
-  },
-  {
-    id: "QTN-004",
-    clientId: "3",
-    title: "CRM Dashboard Upgrade",
-    amount: 85000,
-    status: "rejected",
-    validUntil: "2024-07-31",
-    items: [
-      { description: "Advanced Reporting Module", quantity: 1, rate: 45000, amount: 45000 },
-      { description: "Team Collaboration Features", quantity: 1, rate: 40000, amount: 40000 },
-    ],
-  },
-];
 
 const statusVariant: Record<string, "success" | "default" | "danger" | "secondary" | "warning"> = {
   accepted: "success",
@@ -123,6 +69,9 @@ const statusIcon: Record<string, React.ComponentType<{ className?: string }>> = 
 };
 
 export default function QuotationsPage() {
+  const { data: quotations, loading } = useFirestoreQuery(COLLECTIONS.QUOTATIONS);
+  const { data: clients } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+  const { add: addQuotationToFirestore } = useFirestoreActions(COLLECTIONS.QUOTATIONS);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
@@ -130,15 +79,15 @@ export default function QuotationsPage() {
     clientId: "",
     title: "",
     validUntil: "",
-    items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as InvoiceItem[],
+    items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as { description: string; quantity: number; rate: number; amount: number }[],
   });
 
-  const filteredQuotations = mockQuotations.filter((q) => {
+  const filteredQuotations = quotations.filter((q: any) => {
     return filterStatus === "all" || q.status === filterStatus;
   });
 
   const getClientName = (clientId: string) => {
-    return clients.find((c) => c.id === clientId)?.name || "Unknown";
+    return clients.find((c: any) => c.id === clientId)?.name || "Unknown";
   };
 
   const handleAddItem = () => {
@@ -157,7 +106,7 @@ export default function QuotationsPage() {
     }
   };
 
-  const handleItemChange = (index: number, field: keyof InvoiceItem, value: string | number) => {
+  const handleItemChange = (index: number, field: string, value: string | number) => {
     const updated = [...newQuotation.items];
     updated[index] = { ...updated[index], [field]: value };
     if (field === "quantity" || field === "rate") {
@@ -168,14 +117,27 @@ export default function QuotationsPage() {
 
   const totalAmount = newQuotation.items.reduce((sum, item) => sum + item.amount, 0);
 
-  const handleCreateQuotation = () => {
-    setShowCreateDialog(false);
-    setNewQuotation({
-      clientId: "",
-      title: "",
-      validUntil: "",
-      items: [{ description: "", quantity: 1, rate: 0, amount: 0 }],
-    });
+  const handleCreateQuotation = async () => {
+    try {
+      const total = newQuotation.items.reduce((sum, item) => sum + item.amount, 0);
+      await addQuotationToFirestore({
+        clientId: newQuotation.clientId,
+        title: newQuotation.title,
+        amount: total,
+        status: "draft",
+        validUntil: newQuotation.validUntil,
+        items: newQuotation.items,
+      });
+      setShowCreateDialog(false);
+      setNewQuotation({
+        clientId: "",
+        title: "",
+        validUntil: "",
+        items: [{ description: "", quantity: 1, rate: 0, amount: 0 }],
+      });
+    } catch (err) {
+      console.error("Failed to create quotation:", err);
+    }
   };
 
   return (
@@ -191,7 +153,7 @@ export default function QuotationsPage() {
           <h1 className="text-3xl font-bold tracking-tight text-white">
             <span className="gradient-text">Quotations</span>
           </h1>
-          <p className="mt-1 text-muted">Create and manage client quotations</p>
+          <p className="mt-1 text-muted">{loading ? "Loading..." : "Create and manage client quotations"}</p>
         </div>
         <Button size="sm" onClick={() => setShowCreateDialog(true)}>
           <Plus className="mr-2 h-4 w-4" />
@@ -212,7 +174,7 @@ export default function QuotationsPage() {
             {status}
             {status !== "all" && (
               <Badge variant="secondary" className="ml-2 text-[10px]">
-                {mockQuotations.filter((q) => q.status === status).length}
+                {quotations.filter((q: any) => q.status === status).length}
               </Badge>
             )}
           </Button>
@@ -274,7 +236,7 @@ export default function QuotationsPage() {
                     <div className="rounded-lg border border-border/50 bg-card-hover/30 p-3">
                       <p className="mb-2 text-xs font-medium text-muted">Line Items</p>
                       <div className="space-y-1">
-                        {quotation.items.map((item, i) => (
+                        {quotation.items.map((item: any, i: number) => (
                           <div key={i} className="flex items-center justify-between text-sm">
                             <span className="text-foreground">{item.description}</span>
                             <span className="text-white">{formatCurrency(item.amount)}</span>
@@ -345,7 +307,7 @@ export default function QuotationsPage() {
                   <SelectValue placeholder="Select a client" />
                 </SelectTrigger>
                 <SelectContent>
-                  {clients.map((client) => (
+                  {clients.map((client: any) => (
                     <SelectItem key={client.id} value={client.id}>
                       {client.name} - {client.company}
                     </SelectItem>

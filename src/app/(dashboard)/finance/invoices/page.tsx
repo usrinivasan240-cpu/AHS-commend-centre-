@@ -37,9 +37,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { invoices, clients } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
-import type { Invoice, InvoiceItem } from "@/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -63,27 +63,30 @@ const statusVariant: Record<string, "success" | "default" | "danger" | "secondar
 };
 
 export default function InvoicesPage() {
+  const { data: invoices, loading } = useFirestoreQuery(COLLECTIONS.INVOICES);
+  const { data: clients } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+  const { add: addInvoiceToFirestore } = useFirestoreActions(COLLECTIONS.INVOICES);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
 
   const [newInvoice, setNewInvoice] = useState({
     clientId: "",
-    items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as InvoiceItem[],
+    items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as { description: string; quantity: number; rate: number; amount: number }[],
     notes: "",
   });
 
   const getClientName = (clientId: string) => {
-    return clients.find((c) => c.id === clientId)?.name || "Unknown";
+    return clients.find((c: any) => c.id === clientId)?.name || "Unknown";
   };
 
-  const filteredInvoices = invoices.filter((inv) => {
+  const filteredInvoices = invoices.filter((inv: any) => {
     const matchesStatus = filterStatus === "all" || inv.status === filterStatus;
     const matchesSearch =
       searchQuery === "" ||
-      inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      inv.id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       getClientName(inv.clientId).toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
@@ -104,7 +107,7 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleItemChange = (index: number, field: keyof InvoiceItem, value: string | number) => {
+  const handleItemChange = (index: number, field: string, value: string | number) => {
     const updated = [...newInvoice.items];
     updated[index] = { ...updated[index], [field]: value };
     if (field === "quantity" || field === "rate") {
@@ -115,13 +118,26 @@ export default function InvoicesPage() {
 
   const totalAmount = newInvoice.items.reduce((sum, item) => sum + item.amount, 0);
 
-  const handleCreateInvoice = () => {
-    setShowCreateDialog(false);
-    setNewInvoice({
-      clientId: "",
-      items: [{ description: "", quantity: 1, rate: 0, amount: 0 }],
-      notes: "",
-    });
+  const handleCreateInvoice = async () => {
+    try {
+      const total = newInvoice.items.reduce((sum, item) => sum + item.amount, 0);
+      await addInvoiceToFirestore({
+        clientId: newInvoice.clientId,
+        amount: total,
+        status: "draft",
+        issuedDate: new Date().toISOString().split("T")[0],
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+        items: newInvoice.items,
+      });
+      setShowCreateDialog(false);
+      setNewInvoice({
+        clientId: "",
+        items: [{ description: "", quantity: 1, rate: 0, amount: 0 }],
+        notes: "",
+      });
+    } catch (err) {
+      console.error("Failed to create invoice:", err);
+    }
   };
 
   return (
@@ -137,7 +153,7 @@ export default function InvoicesPage() {
           <h1 className="text-3xl font-bold tracking-tight text-white">
             <span className="gradient-text">Invoices</span>
           </h1>
-          <p className="mt-1 text-muted">Manage and track all invoices</p>
+          <p className="mt-1 text-muted">{loading ? "Loading..." : "Manage and track all invoices"}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" size="sm" onClick={() => alert('Exporting PDF...')}>
@@ -293,7 +309,7 @@ export default function InvoicesPage() {
                   <SelectValue placeholder="Select a client" />
                 </SelectTrigger>
                 <SelectContent>
-                  {clients.map((client) => (
+                  {clients.map((client: any) => (
                     <SelectItem key={client.id} value={client.id}>
                       {client.name} - {client.company}
                     </SelectItem>
@@ -444,7 +460,7 @@ export default function InvoicesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedInvoice.items.map((item, i) => (
+                      {selectedInvoice.items.map((item: any, i: number) => (
                         <tr key={i} className="border-t border-border/30">
                           <td className="px-4 py-2 text-foreground">{item.description}</td>
                           <td className="px-4 py-2 text-right text-foreground">{item.quantity}</td>

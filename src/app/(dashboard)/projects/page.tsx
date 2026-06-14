@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   Search,
   Plus,
-  FolderKanban,
   Users,
   Calendar,
   IndianRupee,
@@ -20,7 +19,7 @@ import {
   AlertTriangle,
   LayoutGrid,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -33,9 +32,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { projects, members, teams } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, getInitials, formatDate } from "@/lib/utils";
-import type { Project } from "@/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 type SortField = "name" | "progress" | "budget" | "endDate";
 type SortDir = "asc" | "desc";
@@ -69,12 +78,6 @@ const priorityVariant: Record<string, "default" | "secondary" | "success" | "war
   low: "secondary",
 };
 
-const statusIcon: Record<string, React.ReactNode> = {
-  "in-progress": <Clock className="h-3.5 w-3.5" />,
-  completed: <CheckCircle2 className="h-3.5 w-3.5" />,
-  delayed: <AlertTriangle className="h-3.5 w-3.5" />,
-};
-
 function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
   if (sortField !== field) return <ArrowUpDown className="h-3.5 w-3.5 text-muted" />;
   return sortDir === "asc" ? (
@@ -91,10 +94,17 @@ export default function ProjectsPage() {
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newProject, setNewProject] = useState({ name: "", description: "", clientName: "", startDate: "", endDate: "", budget: "", priority: "medium" as "low" | "medium" | "high" | "critical", teamId: "" });
 
-  const uniqueStatuses = useMemo(() => Array.from(new Set(projects.map((p) => p.status))), []);
-  const uniquePriorities = useMemo(() => Array.from(new Set(projects.map((p) => p.priority))), []);
-  const uniqueTeams = useMemo(() => Array.from(new Set(projects.map((p) => p.teamId))), []);
+  const { data: projects, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: teams } = useFirestoreQuery(COLLECTIONS.TEAMS);
+  const { data: members } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { add: addProject, loading: addingProject } = useFirestoreActions(COLLECTIONS.PROJECTS);
+
+  const uniqueStatuses = useMemo(() => Array.from(new Set(projects.map((p) => p.status as string))), [projects]);
+  const uniquePriorities = useMemo(() => Array.from(new Set(projects.map((p) => p.priority as string))), [projects]);
+  const uniqueTeams = useMemo(() => Array.from(new Set(projects.map((p) => p.teamId as string))), [projects]);
 
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name || teamId;
 
@@ -109,9 +119,9 @@ export default function ProjectsPage() {
       active: projects.filter((p) => p.status === "in-progress").length,
       completed: projects.filter((p) => p.status === "completed").length,
       delayed: projects.filter((p) => p.status === "delayed").length,
-      totalBudget: projects.reduce((s, p) => s + p.budget, 0),
+      totalBudget: projects.reduce((s, p) => s + (p.budget || 0), 0),
     }),
-    []
+    [projects]
   );
 
   const filteredProjects = useMemo(() => {
@@ -146,7 +156,7 @@ export default function ProjectsPage() {
     });
 
     return result;
-  }, [search, statusFilter, priorityFilter, teamFilter, sortField, sortDir]);
+  }, [projects, search, statusFilter, priorityFilter, teamFilter, sortField, sortDir]);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -159,6 +169,32 @@ export default function ProjectsPage() {
 
   const hasFilters = statusFilter !== "all" || priorityFilter !== "all" || teamFilter !== "all" || search;
 
+  const handleCreateProject = async () => {
+    if (!newProject.name || !newProject.startDate || !newProject.endDate) return;
+    await addProject({
+      name: newProject.name,
+      description: newProject.description,
+      clientName: newProject.clientName,
+      startDate: newProject.startDate,
+      endDate: newProject.endDate,
+      budget: Number(newProject.budget) || 0,
+      priority: newProject.priority,
+      teamId: newProject.teamId,
+      status: "new",
+      progress: 0,
+    });
+    setCreateDialogOpen(false);
+    setNewProject({ name: "", description: "", clientName: "", startDate: "", endDate: "", budget: "", priority: "medium", teamId: "" });
+  };
+
+  if (projectsLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
       {/* Header */}
@@ -167,12 +203,10 @@ export default function ProjectsPage() {
           <h1 className="text-3xl font-bold tracking-tight text-white">Projects</h1>
           <p className="mt-1 text-muted">Track and manage all your projects</p>
         </div>
-        <Link href="/projects">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Project
-          </Button>
-        </Link>
+        <Button onClick={() => setCreateDialogOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Project
+        </Button>
       </motion.div>
 
       {/* Stats */}
@@ -304,7 +338,7 @@ export default function ProjectsPage() {
           const membersList = teamMembers(project.teamId);
           const daysRemaining = Math.max(
             0,
-            Math.ceil((new Date(project.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+            Math.ceil((new Date(project.endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
           );
 
           return (
@@ -408,6 +442,75 @@ export default function ProjectsPage() {
           </Card>
         </motion.div>
       )}
+
+      {/* Create Project Dialog */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Project</DialogTitle>
+            <DialogDescription>Set up a new project for your team.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Project Name *</Label>
+              <Input placeholder="e.g. E-Commerce Platform" value={newProject.name} onChange={(e) => setNewProject((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea placeholder="Brief project description..." value={newProject.description} onChange={(e) => setNewProject((p) => ({ ...p, description: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Client Name</Label>
+              <Input placeholder="e.g. RetailCorp" value={newProject.clientName} onChange={(e) => setNewProject((p) => ({ ...p, clientName: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Start Date *</Label>
+                <Input type="date" value={newProject.startDate} onChange={(e) => setNewProject((p) => ({ ...p, startDate: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>End Date *</Label>
+                <Input type="date" value={newProject.endDate} onChange={(e) => setNewProject((p) => ({ ...p, endDate: e.target.value }))} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Budget</Label>
+                <Input type="number" placeholder="e.g. 500000" value={newProject.budget} onChange={(e) => setNewProject((p) => ({ ...p, budget: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Priority</Label>
+                <Select value={newProject.priority} onValueChange={(v) => setNewProject((p) => ({ ...p, priority: v as "low" | "medium" | "high" | "critical" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Team</Label>
+              <Select value={newProject.teamId} onValueChange={(v) => setNewProject((p) => ({ ...p, teamId: v }))}>
+                <SelectTrigger><SelectValue placeholder="Select team" /></SelectTrigger>
+                <SelectContent>
+                  {teams.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateProject} disabled={addingProject || !newProject.name || !newProject.startDate || !newProject.endDate}>
+              {addingProject ? "Creating..." : "Create Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

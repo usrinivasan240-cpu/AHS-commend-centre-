@@ -25,7 +25,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { leads, meetings, clients } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, formatDate, getInitials } from "@/lib/utils";
 import {
   PieChart as RePie,
@@ -73,23 +74,29 @@ const statusColors: Record<string, string> = {
 };
 
 export default function CRMPage() {
+  const { data: leads, loading: leadsLoading } = useFirestoreQuery(COLLECTIONS.LEADS);
+  const { data: meetings, loading: meetingsLoading } = useFirestoreQuery(COLLECTIONS.MEETINGS);
+  const { data: clients, loading: clientsLoading } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+
+  const loading = leadsLoading || meetingsLoading || clientsLoading;
+
   const stats = useMemo(() => {
     const totalLeads = leads.length;
     const qualified = leads.filter(
-      (l) => l.status === "qualified" || l.status === "proposal"
+      (l: any) => l.status === "qualified" || l.status === "proposal"
     ).length;
     const pipelineValue = leads
-      .filter((l) => !["closed-won", "closed-lost"].includes(l.status))
-      .reduce((sum, l) => sum + l.value, 0);
-    const closedWon = leads.filter((l) => l.status === "closed-won").length;
+      .filter((l: any) => !["closed-won", "closed-lost"].includes(l.status))
+      .reduce((sum: number, l: any) => sum + (l.value || 0), 0);
+    const closedWon = leads.filter((l: any) => l.status === "closed-won").length;
     const conversionRate = totalLeads > 0 ? Math.round((closedWon / totalLeads) * 100) : 0;
 
     return { totalLeads, qualified, pipelineValue, conversionRate };
-  }, []);
+  }, [leads]);
 
   const leadsBySource = useMemo(() => {
     const sourceMap: Record<string, number> = {};
-    leads.forEach((l) => {
+    leads.forEach((l: any) => {
       sourceMap[l.source] = (sourceMap[l.source] || 0) + 1;
     });
     return Object.entries(sourceMap).map(([name, value]) => ({
@@ -97,11 +104,11 @@ export default function CRMPage() {
       value,
       color: sourceColors[name] || "#64748b",
     }));
-  }, []);
+  }, [leads]);
 
   const leadsByStatus = useMemo(() => {
     const statusMap: Record<string, number> = {};
-    leads.forEach((l) => {
+    leads.forEach((l: any) => {
       statusMap[l.status] = (statusMap[l.status] || 0) + 1;
     });
     return Object.entries(statusMap).map(([name, count]) => ({
@@ -109,15 +116,23 @@ export default function CRMPage() {
       count,
       fill: statusColors[name] || "#64748b",
     }));
-  }, []);
+  }, [leads]);
 
   const recentLeads = leads.slice(-4).reverse();
   const upcomingMeetings = meetings
-    .filter((m) => m.status === "scheduled")
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    .filter((m: any) => m.status === "scheduled")
+    .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   const getClientName = (clientId: string) =>
-    clients.find((c) => c.id === clientId)?.name || "Internal";
+    clients.find((c: any) => c.id === clientId)?.name || "Internal";
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted">Loading CRM data...</p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -171,7 +186,7 @@ export default function CRMPage() {
             icon: TrendingUp,
             color: "text-yellow-400",
             bg: "bg-yellow-400/10",
-            change: `${leads.filter((l) => l.status === "closed-won").length} closed`,
+            change: `${leads.filter((l: any) => l.status === "closed-won").length} closed`,
           },
         ].map((stat) => {
           const Icon = stat.icon;

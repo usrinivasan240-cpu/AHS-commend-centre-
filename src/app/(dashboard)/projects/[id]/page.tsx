@@ -25,9 +25,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { projects, tasks, members, teams } from "@/lib/mock-data";
+import { useFirestoreQuery, where } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate, formatCurrency, getInitials } from "@/lib/utils";
-import type { Project, Task } from "@/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -95,17 +95,30 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const [activeTab, setActiveTab] = useState("overview");
 
-  const project = useMemo(() => projects.find((p) => p.id === id), [id]);
-  const projectTasks = useMemo(() => tasks.filter((t) => t.projectId === id), [id]);
+  const { data: project, loading: projectLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS, where("__name__", "==", id));
+  const { data: allTasks, loading: tasksLoading } = useFirestoreQuery(COLLECTIONS.TASKS, where("projectId", "==", id));
+  const { data: members } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { data: teams } = useFirestoreQuery(COLLECTIONS.TEAMS);
+
+  const projectData = project[0] || null;
+  const projectTasks = allTasks;
 
   const projectTeam = useMemo(() => {
-    if (!project) return [];
-    const team = teams.find((t) => t.id === project.teamId);
+    if (!projectData) return [];
+    const team = teams.find((t) => t.id === projectData.teamId);
     if (!team) return [];
     return members.filter((m) => m.team === team.name.replace(" Team", ""));
-  }, [project]);
+  }, [projectData, teams, members]);
 
-  if (!project) {
+  if (projectLoading || tasksLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!projectData) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <AlertCircle className="mb-4 h-12 w-12 text-muted" />
@@ -119,9 +132,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     );
   }
 
+  const projectObj = projectData;
   const daysRemaining = Math.max(
     0,
-    Math.ceil((new Date(project.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    Math.ceil((new Date(projectObj.endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
   );
 
   const completedTasks = projectTasks.filter((t) => t.status === "completed").length;
@@ -146,24 +160,24 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="text-2xl font-bold text-white">{project.name}</h1>
-                  <Badge variant={statusVariant[project.status]} className="capitalize">
-                    {project.status.replace(/-/g, " ")}
-                  </Badge>
-                  <Badge variant={priorityVariant[project.priority]} className="capitalize">
-                    {project.priority}
-                  </Badge>
-                </div>
-                <p className="mt-2 max-w-2xl text-muted">{project.description}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-muted">
-                  <span className="flex items-center gap-1.5">
-                    <Users className="h-3.5 w-3.5" />
-                    Client: {project.clientName || "Internal"}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Calendar className="h-3.5 w-3.5" />
-                    {formatDate(project.startDate)} — {formatDate(project.endDate)}
-                  </span>
+                   <h1 className="text-2xl font-bold text-white">{projectObj.name}</h1>
+                   <Badge variant={statusVariant[projectObj.status]} className="capitalize">
+                     {projectObj.status.replace(/-/g, " ")}
+                   </Badge>
+                   <Badge variant={priorityVariant[projectObj.priority]} className="capitalize">
+                     {projectObj.priority}
+                   </Badge>
+                 </div>
+                 <p className="mt-2 max-w-2xl text-muted">{projectObj.description}</p>
+                 <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-muted">
+                   <span className="flex items-center gap-1.5">
+                     <Users className="h-3.5 w-3.5" />
+                     Client: {projectObj.clientName || "Internal"}
+                   </span>
+                   <span className="flex items-center gap-1.5">
+                     <Calendar className="h-3.5 w-3.5" />
+                     {formatDate(projectObj.startDate)} — {formatDate(projectObj.endDate)}
+                   </span>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -197,8 +211,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             {/* Stats Cards */}
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               {[
-                { label: "Progress", value: `${project.progress}%`, icon: BarChart3, color: "text-primary", bg: "bg-primary/10" },
-                { label: "Budget", value: formatCurrency(project.budget), icon: IndianRupee, color: "text-success", bg: "bg-success/10" },
+                { label: "Progress", value: `${projectObj.progress}%`, icon: BarChart3, color: "text-primary", bg: "bg-primary/10" },
+                { label: "Budget", value: formatCurrency(projectObj.budget), icon: IndianRupee, color: "text-success", bg: "bg-success/10" },
                 { label: "Days Remaining", value: daysRemaining.toString(), icon: Clock, color: daysRemaining <= 14 ? "text-danger" : "text-warning", bg: daysRemaining <= 14 ? "bg-danger/10" : "bg-warning/10" },
                 { label: "Team Size", value: projectTeam.length.toString(), icon: Users, color: "text-secondary", bg: "bg-secondary/10" },
               ].map((stat) => {
@@ -233,11 +247,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-sm text-muted">Overall Completion</span>
-                    <span className="text-sm font-bold text-white">{project.progress}%</span>
+                    <span className="text-sm font-bold text-white">{projectObj.progress}%</span>
                   </div>
                   <Progress
-                    value={project.progress}
-                    color={project.progress >= 80 ? "success" : project.progress >= 50 ? "default" : "warning"}
+                    value={projectObj.progress}
+                    color={projectObj.progress >= 80 ? "success" : projectObj.progress >= 50 ? "default" : "warning"}
                     className="h-3"
                   />
                 </div>
@@ -268,14 +282,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted leading-relaxed">{project.description}</p>
+                  <p className="text-sm text-muted leading-relaxed">{projectObj.description}</p>
                   <Separator className="my-4" />
                   <div className="space-y-3">
                     {[
-                      { label: "Client", value: project.clientName || "Internal" },
-                      { label: "Start Date", value: formatDate(project.startDate) },
-                      { label: "End Date", value: formatDate(project.endDate) },
-                      { label: "Budget", value: formatCurrency(project.budget) },
+                      { label: "Client", value: projectObj.clientName || "Internal" },
+                      { label: "Start Date", value: formatDate(projectObj.startDate) },
+                      { label: "End Date", value: formatDate(projectObj.endDate) },
+                      { label: "Budget", value: formatCurrency(projectObj.budget) },
                     ].map((detail) => (
                       <div key={detail.label} className="flex items-center justify-between">
                         <span className="text-sm text-muted">{detail.label}</span>
@@ -425,7 +439,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           <p className="font-medium text-white">{member.name}</p>
                           <p className="text-xs text-muted">{member.email}</p>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {member.skills.slice(0, 2).map((skill) => (
+                            {(member.skills || []).slice(0, 2).map((skill: string) => (
                               <Badge key={skill} variant="outline" className="text-[9px] px-1.5 py-0">
                                 {skill}
                               </Badge>

@@ -26,7 +26,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { assessments, members } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn } from "@/lib/utils";
 import {
   BarChart,
@@ -53,7 +54,12 @@ const staggerContainer = {
   },
 };
 
-interface Result {
+const pieColors = ["#10b981", "#ef4444"];
+
+type SortField = "name" | "score" | "timeTaken";
+type SortDir = "asc" | "desc";
+
+interface FirestoreResult {
   id: string;
   memberId: string;
   assessmentId: string;
@@ -63,40 +69,8 @@ interface Result {
   timeTaken: number;
   status: "pass" | "fail";
   completedAt: string;
+  [key: string]: unknown;
 }
-
-const mockResults: Result[] = [
-  { id: "r1", memberId: "3", assessmentId: "3", score: 46, totalMarks: 50, grade: "A+", timeTaken: 48, status: "pass", completedAt: "2024-07-15" },
-  { id: "r2", memberId: "6", assessmentId: "3", score: 42, totalMarks: 50, grade: "A", timeTaken: 52, status: "pass", completedAt: "2024-07-15" },
-  { id: "r3", memberId: "5", assessmentId: "3", score: 38, totalMarks: 50, grade: "A", timeTaken: 55, status: "pass", completedAt: "2024-07-15" },
-  { id: "r4", memberId: "8", assessmentId: "3", score: 35, totalMarks: 50, grade: "B+", timeTaken: 58, status: "pass", completedAt: "2024-07-15" },
-  { id: "r5", memberId: "7", assessmentId: "3", score: 30, totalMarks: 50, grade: "B", timeTaken: 60, status: "pass", completedAt: "2024-07-15" },
-  { id: "r6", memberId: "10", assessmentId: "3", score: 22, totalMarks: 50, grade: "C", timeTaken: 60, status: "fail", completedAt: "2024-07-15" },
-  { id: "r7", memberId: "3", assessmentId: "4", score: 88, totalMarks: 100, grade: "A+", timeTaken: 25, status: "pass", completedAt: "2024-07-20" },
-  { id: "r8", memberId: "5", assessmentId: "4", score: 75, totalMarks: 100, grade: "A", timeTaken: 28, status: "pass", completedAt: "2024-07-20" },
-  { id: "r9", memberId: "7", assessmentId: "4", score: 82, totalMarks: 100, grade: "A", timeTaken: 30, status: "pass", completedAt: "2024-07-20" },
-  { id: "r10", memberId: "6", assessmentId: "4", score: 55, totalMarks: 100, grade: "C+", timeTaken: 30, status: "fail", completedAt: "2024-07-20" },
-  { id: "r11", memberId: "4", assessmentId: "3", score: 44, totalMarks: 50, grade: "A", timeTaken: 45, status: "pass", completedAt: "2024-07-15" },
-  { id: "r12", memberId: "9", assessmentId: "3", score: 28, totalMarks: 50, grade: "B-", timeTaken: 60, status: "pass", completedAt: "2024-07-15" },
-];
-
-const scoreDistribution = [
-  { range: "0-20", count: 1 },
-  { range: "21-40", count: 3 },
-  { range: "41-60", count: 4 },
-  { range: "61-80", count: 3 },
-  { range: "81-100", count: 1 },
-];
-
-const passFailData = [
-  { name: "Pass", value: 9 },
-  { name: "Fail", value: 3 },
-];
-
-const pieColors = ["#10b981", "#ef4444"];
-
-type SortField = "name" | "score" | "timeTaken";
-type SortDir = "asc" | "desc";
 
 function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
   if (sortField !== field) return <ArrowUpDown className="h-3.5 w-3.5 text-[#64748b]" />;
@@ -108,19 +82,33 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
 }
 
 export default function ResultsPage() {
+  const { data: assessments, loading: loadingAssessments } = useFirestoreQuery(COLLECTIONS.ASSESSMENTS);
+  const { data: rawResults, loading: loadingResults } = useFirestoreQuery(COLLECTIONS.ASSESSMENT_RESULTS);
+  const { data: members } = useFirestoreQuery(COLLECTIONS.USERS);
+  const results = rawResults as unknown as FirestoreResult[];
   const [assessmentFilter, setAssessmentFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("score");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  const loading = loadingAssessments || loadingResults;
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading results...</div>
+      </div>
+    );
+  }
+
   const completedAssessments = assessments.filter((a) => a.status === "completed");
 
   const resultsWithNames = useMemo(() => {
-    return mockResults.map((r) => {
+    return results.map((r) => {
       const member = members.find((m) => m.id === r.memberId);
       return { ...r, memberName: member?.name || "Unknown" };
     });
-  }, []);
+  }, [results, members]);
 
   const filtered = useMemo(() => {
     let result = [...resultsWithNames];
@@ -156,6 +144,29 @@ export default function ResultsPage() {
 
   const hasFilters = assessmentFilter !== "all" || search;
 
+  const scoreDistribution = useMemo(() => {
+    const ranges = ["0-20", "21-40", "41-60", "61-80", "81-100"];
+    const buckets = [0, 0, 0, 0, 0];
+    results.forEach((r) => {
+      const pct = (r.score / r.totalMarks) * 100;
+      if (pct <= 20) buckets[0]++;
+      else if (pct <= 40) buckets[1]++;
+      else if (pct <= 60) buckets[2]++;
+      else if (pct <= 80) buckets[3]++;
+      else buckets[4]++;
+    });
+    return ranges.map((range, i) => ({ range, count: buckets[i] }));
+  }, [results]);
+
+  const passFailData = useMemo(() => {
+    const passCount = results.filter((r) => r.status === "pass").length;
+    const failCount = results.filter((r) => r.status === "fail").length;
+    return [
+      { name: "Pass", value: passCount },
+      { name: "Fail", value: failCount },
+    ];
+  }, [results]);
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
       <motion.div variants={fadeInUp} className="flex items-center justify-between">
@@ -172,10 +183,10 @@ export default function ResultsPage() {
       {/* Stats */}
       <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: "Total Results", value: mockResults.length, color: "text-[#0066ff]" },
-          { label: "Pass Rate", value: `${Math.round((9 / 12) * 100)}%`, color: "text-[#10b981]" },
-          { label: "Avg Score", value: `${Math.round(mockResults.reduce((s, r) => s + (r.score / r.totalMarks) * 100, 0) / mockResults.length)}%`, color: "text-[#00d9ff]" },
-          { label: "Highest Score", value: `${Math.max(...mockResults.map((r) => r.score))}/${mockResults.find((r) => r.score === Math.max(...mockResults.map((r2) => r2.score)))?.totalMarks}`, color: "text-[#f59e0b]" },
+          { label: "Total Results", value: results.length, color: "text-[#0066ff]" },
+          { label: "Pass Rate", value: results.length ? `${Math.round((results.filter((r) => r.status === "pass").length / results.length) * 100)}%` : "0%", color: "text-[#10b981]" },
+          { label: "Avg Score", value: results.length ? `${Math.round(results.reduce((s, r) => s + (r.score / r.totalMarks) * 100, 0) / results.length)}%` : "0%", color: "text-[#00d9ff]" },
+          { label: "Highest Score", value: results.length ? `${Math.max(...results.map((r) => r.score))}/${results.find((r) => r.score === Math.max(...results.map((r2) => r2.score)))?.totalMarks}` : "0/0", color: "text-[#f59e0b]" },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">

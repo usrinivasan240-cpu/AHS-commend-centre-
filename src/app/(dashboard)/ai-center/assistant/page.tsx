@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Bot,
@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -49,71 +51,11 @@ const preDefinedQuestions = [
   { label: "Team performance", icon: BarChart3, color: "text-secondary" },
 ];
 
-const aiResponses: Record<string, { content: string; type: "text" | "insight"; data?: Record<string, unknown> }> = {
-  "Which projects are delayed?": {
-    content: "Based on my analysis, here are the delayed projects:",
-    type: "insight",
-    data: {
-      projects: [
-        { name: "Cloud Migration", client: "DataFlow", delay: "4 days", budget: 420000, severity: "critical" },
-      ],
-      summary: "1 project is currently delayed. Cloud Migration for DataFlow is 4 days behind schedule. Consider reallocating resources from completed tasks to get it back on track.",
-    },
-  },
-  "Who are top performers?": {
-    content: "Here are your top performers based on performance scores:",
-    type: "insight",
-    data: {
-      members: [
-        { name: "Arjun Krishnamurthy", score: 95, role: "Super Admin" },
-        { name: "Karthik Subramanian", score: 91, role: "Team Lead" },
-        { name: "Priya Venkatesh", score: 88, role: "Core Admin" },
-        { name: "Divya Ramachandran", score: 87, role: "Team Lead" },
-      ],
-      summary: "Arjun leads with 95% performance score. The top 4 members all score above 85%. Consider them for lead roles on critical projects.",
-    },
-  },
-  "Show weak performers": {
-    content: "Here are team members who may need additional support:",
-    type: "insight",
-    data: {
-      members: [
-        { name: "Sneha Krishnan", score: 65, role: "Trainee" },
-        { name: "Deepak Murugan", score: 60, role: "Trainee" },
-        { name: "Kavya Nair", score: 55, role: "Trainee" },
-      ],
-      summary: "3 trainees have scores below 70. Recommend pairing them with senior members for mentorship and assigning focused learning paths.",
-    },
-  },
-  "Revenue summary": {
-    content: "Here's your financial overview:",
-    type: "insight",
-    data: {
-      metrics: [
-        { label: "Total Revenue", value: "₹13,80,000", trend: "+18.2%" },
-        { label: "Total Expenses", value: "₹8,90,000", trend: "+12.5%" },
-        { label: "Net Profit", value: "₹4,90,000", trend: "+24.8%" },
-        { label: "Pending Invoices", value: "₹3,85,000", count: 3 },
-      ],
-      summary: "Revenue is strong with ₹13.8L total. Profit margin is 35.5%. 3 invoices pending worth ₹3.85L - follow up recommended on INV-003 (overdue).",
-    },
-  },
-  "Team performance": {
-    content: "Here's the team performance breakdown:",
-    type: "insight",
-    data: {
-      teams: [
-        { name: "Core Team", performance: 91, members: 3 },
-        { name: "Frontend Team", performance: 84, members: 4 },
-        { name: "Backend Team", performance: 82, members: 3 },
-        { name: "AI/ML Team", performance: 78, members: 3 },
-      ],
-      summary: "Core team leads with 91% average. AI/ML team at 78% could benefit from additional training resources. Overall organizational performance is 83.75%.",
-    },
-  },
-};
-
 export default function AIBusinessAssistantPage() {
+  const { data: projects } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: users } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { data: invoices } = useFirestoreQuery(COLLECTIONS.INVOICES);
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -135,6 +77,121 @@ export default function AIBusinessAssistantPage() {
     scrollToBottom();
   }, [messages, isTyping]);
 
+  const getAIResponse = useCallback((question: string): { content: string; type: "text" | "insight"; data?: Record<string, unknown> } => {
+    const q = question.trim().toLowerCase();
+
+    if (q.includes("delayed") || q.includes("delay")) {
+      const delayed = projects.filter((p: any) => p.status === "delayed");
+      if (delayed.length === 0) {
+        return {
+          content: "Good news! No projects are currently delayed.",
+          type: "text",
+        };
+      }
+      return {
+        content: "Based on my analysis, here are the delayed projects:",
+        type: "insight",
+        data: {
+          projects: delayed.map((p: any) => ({
+            name: p.name,
+            client: p.clientName || "Internal",
+            delay: "Behind schedule",
+            budget: p.budget,
+            severity: p.priority,
+          })),
+          summary: `${delayed.length} project(s) currently delayed. Consider reallocating resources to get them back on track.`,
+        },
+      };
+    }
+
+    if (q.includes("top performer") || q.includes("best performer")) {
+      const sorted = [...users].sort((a: any, b: any) => (b.performanceScore || 0) - (a.performanceScore || 0)).slice(0, 5);
+      if (sorted.length === 0) {
+        return { content: "No team member data available yet.", type: "text" };
+      }
+      return {
+        content: "Here are your top performers based on performance scores:",
+        type: "insight",
+        data: {
+          members: sorted.map((m: any) => ({
+            name: m.name,
+            score: m.performanceScore || 0,
+            role: m.role?.replace("-", " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || "Member",
+          })),
+          summary: `${sorted[0]?.name} leads with ${sorted[0]?.performanceScore}% performance score. The top ${sorted.length} members all contribute strongly.`,
+        },
+      };
+    }
+
+    if (q.includes("weak performer") || q.includes("low performer") || q.includes("struggling")) {
+      const weak = users.filter((u: any) => (u.performanceScore || 0) < 70).sort((a: any, b: any) => (a.performanceScore || 0) - (b.performanceScore || 0));
+      if (weak.length === 0) {
+        return { content: "All team members are performing above 70%.", type: "text" };
+      }
+      return {
+        content: "Here are team members who may need additional support:",
+        type: "insight",
+        data: {
+          members: weak.map((m: any) => ({
+            name: m.name,
+            score: m.performanceScore || 0,
+            role: m.role?.replace("-", " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || "Member",
+          })),
+          summary: `${weak.length} member(s) have scores below 70. Recommend pairing them with senior members for mentorship.`,
+        },
+      };
+    }
+
+    if (q.includes("revenue") || q.includes("financial") || q.includes("money")) {
+      const totalRevenue = invoices.reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
+      const paid = invoices.filter((i: any) => i.status === "paid");
+      const paidAmount = paid.reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
+      const pending = invoices.filter((i: any) => i.status !== "paid");
+      const pendingAmount = pending.reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
+      return {
+        content: "Here's your financial overview:",
+        type: "insight",
+        data: {
+          metrics: [
+            { label: "Total Revenue", value: formatCurrency(totalRevenue), trend: "+18.2%" },
+            { label: "Paid Invoices", value: formatCurrency(paidAmount), trend: `${paid.length} invoices` },
+            { label: "Pending Invoices", value: formatCurrency(pendingAmount), trend: `${pending.length} pending` },
+            { label: "Total Invoices", value: `${invoices.length}`, trend: `${paid.length} paid` },
+          ],
+          summary: `Total revenue is ${formatCurrency(totalRevenue)}. ${paid.length} invoices paid, ${pending.length} pending.`,
+        },
+      };
+    }
+
+    if (q.includes("team performance") || q.includes("team") || q.includes("teams")) {
+      const teamMap: Record<string, { scores: number[]; count: number }> = {};
+      users.forEach((u: any) => {
+        const team = u.team || "Unassigned";
+        if (!teamMap[team]) teamMap[team] = { scores: [], count: 0 };
+        teamMap[team].scores.push(u.performanceScore || 0);
+        teamMap[team].count++;
+      });
+      const teamData = Object.entries(teamMap).map(([name, data]) => ({
+        name: name + " Team",
+        performance: Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length),
+        members: data.count,
+      }));
+      return {
+        content: "Here's the team performance breakdown:",
+        type: "insight",
+        data: {
+          teams: teamData,
+          summary: `Overall organizational performance is ${Math.round(teamData.reduce((s, t) => s + t.performance, 0) / teamData.length)}% across ${teamData.length} teams.`,
+        },
+      };
+    }
+
+    return {
+      content: `I'll analyze "${question}" for you. Based on the current data from ${projects.length} projects and ${users.length} team members, I can help you explore this further. Try asking about delayed projects, top performers, revenue, or team performance.`,
+      type: "text",
+    };
+  }, [projects, users, invoices]);
+
   const handleSendMessage = (content: string) => {
     if (!content.trim()) return;
 
@@ -152,7 +209,7 @@ export default function AIBusinessAssistantPage() {
 
     // Simulate AI response
     setTimeout(() => {
-      const responseData = aiResponses[content.trim()];
+      const responseData = getAIResponse(content.trim());
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",

@@ -43,9 +43,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { meetings as initialMeetings, clients } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate } from "@/lib/utils";
-import type { Meeting } from "@/types";
 import { format, isSameDay, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths } from "date-fns";
 
 const fadeInUp = {
@@ -75,7 +75,9 @@ const statusConfig: Record<string, { variant: "success" | "warning" | "danger" |
 };
 
 export default function MeetingsPage() {
-  const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
+  const { data: meetings, loading } = useFirestoreQuery(COLLECTIONS.MEETINGS);
+  const { data: clients } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+  const { add: addMeetingToFirestore } = useFirestoreActions(COLLECTIONS.MEETINGS);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -87,57 +89,59 @@ export default function MeetingsPage() {
     clientId: "",
     date: "",
     time: "",
-    type: "meeting" as Meeting["type"],
+    type: "meeting" as string,
     notes: "",
   });
 
   const getClientName = (clientId: string) =>
-    clients.find((c) => c.id === clientId)?.name || "Internal";
+    clients.find((c: any) => c.id === clientId)?.name || "Internal";
 
   const filteredMeetings = useMemo(() => {
     let result = [...meetings];
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
-        (m) =>
-          m.title.toLowerCase().includes(q) ||
+        (m: any) =>
+          m.title?.toLowerCase().includes(q) ||
           getClientName(m.clientId).toLowerCase().includes(q)
       );
     }
     if (typeFilter !== "all") {
-      result = result.filter((m) => m.type === typeFilter);
+      result = result.filter((m: any) => m.type === typeFilter);
     }
     if (statusFilter !== "all") {
-      result = result.filter((m) => m.status === statusFilter);
+      result = result.filter((m: any) => m.status === statusFilter);
     }
     return result.sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      (a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
-  }, [meetings, search, typeFilter, statusFilter]);
+  }, [meetings, search, typeFilter, statusFilter, clients]);
 
-  const addMeeting = () => {
+  const addMeeting = async () => {
     if (!newMeeting.title || !newMeeting.date) return;
-    const meeting: Meeting = {
-      id: String(meetings.length + 1),
-      title: newMeeting.title,
-      clientId: newMeeting.clientId,
-      date: newMeeting.time
-        ? `${newMeeting.date}T${newMeeting.time}`
-        : `${newMeeting.date}T09:00:00`,
-      type: newMeeting.type,
-      status: "scheduled",
-      notes: newMeeting.notes || undefined,
-    };
-    setMeetings((prev) => [...prev, meeting]);
-    setNewMeeting({
-      title: "",
-      clientId: "",
-      date: "",
-      time: "",
-      type: "meeting",
-      notes: "",
-    });
-    setDialogOpen(false);
+    try {
+      await addMeetingToFirestore({
+        title: newMeeting.title,
+        clientId: newMeeting.clientId,
+        date: newMeeting.time
+          ? `${newMeeting.date}T${newMeeting.time}`
+          : `${newMeeting.date}T09:00:00`,
+        type: newMeeting.type,
+        status: "scheduled",
+        notes: newMeeting.notes || "",
+      });
+      setNewMeeting({
+        title: "",
+        clientId: "",
+        date: "",
+        time: "",
+        type: "meeting",
+        notes: "",
+      });
+      setDialogOpen(false);
+    } catch (err) {
+      console.error("Failed to schedule meeting:", err);
+    }
   };
 
   // Calendar logic
@@ -147,7 +151,7 @@ export default function MeetingsPage() {
   const startPadding = getDay(monthStart);
 
   const getMeetingsForDay = (day: Date) =>
-    meetings.filter((m) => isSameDay(parseISO(m.date), day));
+    meetings.filter((m: any) => isSameDay(parseISO(m.date), day));
 
   return (
     <motion.div
@@ -162,7 +166,7 @@ export default function MeetingsPage() {
             <span className="gradient-text">Meetings</span>
           </h1>
           <p className="mt-1 text-muted">
-            {filteredMeetings.length} meeting{filteredMeetings.length !== 1 ? "s" : ""}
+            {loading ? "Loading..." : `${filteredMeetings.length} meeting${filteredMeetings.length !== 1 ? "s" : ""}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -425,7 +429,7 @@ export default function MeetingsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Internal</SelectItem>
-                  {clients.map((c) => (
+                  {clients.map((c: any) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
                     </SelectItem>
@@ -460,7 +464,7 @@ export default function MeetingsPage() {
               <Select
                 value={newMeeting.type}
                 onValueChange={(v) =>
-                  setNewMeeting({ ...newMeeting, type: v as Meeting["type"] })
+                  setNewMeeting({ ...newMeeting, type: v as string })
                 }
               >
                 <SelectTrigger>

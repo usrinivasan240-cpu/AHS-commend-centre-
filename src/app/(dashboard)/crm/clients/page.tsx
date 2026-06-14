@@ -26,7 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { clients } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, formatDate, getInitials } from "@/lib/utils";
 
 const fadeInUp = {
@@ -44,6 +45,7 @@ const staggerContainer = {
 };
 
 export default function ClientsPage() {
+  const { data: clients, loading } = useFirestoreQuery(COLLECTIONS.CLIENTS);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -53,19 +55,27 @@ export default function ClientsPage() {
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.company.toLowerCase().includes(q) ||
-          c.email.toLowerCase().includes(q)
+        (c: any) =>
+          c.name?.toLowerCase().includes(q) ||
+          c.company?.toLowerCase().includes(q) ||
+          c.email?.toLowerCase().includes(q)
       );
     }
     if (statusFilter !== "all") {
-      result = result.filter((c) => c.status === statusFilter);
+      result = result.filter((c: any) => c.status === statusFilter);
     }
     return result;
-  }, [search, statusFilter]);
+  }, [clients, search, statusFilter]);
 
-  const totalRevenue = clients.reduce((sum, c) => sum + c.totalRevenue, 0);
+  const totalRevenue = clients.reduce((sum: number, c: any) => sum + (c.totalRevenue || 0), 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted">Loading clients...</p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -198,7 +208,7 @@ export default function ClientsPage() {
                               Projects
                             </h4>
                             <div className="space-y-1.5">
-                              {client.projects.map((project, idx) => (
+                              {client.projects.map((project: string, idx: number) => (
                                 <div
                                   key={idx}
                                   className="flex items-center gap-2 rounded-md bg-primary/5 px-3 py-1.5 text-sm"

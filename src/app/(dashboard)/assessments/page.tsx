@@ -16,7 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { assessments } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate } from "@/lib/utils";
 import {
   AreaChart,
@@ -56,6 +57,16 @@ const scoreTrend = [
 ];
 
 export default function AssessmentsDashboardPage() {
+  const { data: assessments, loading } = useFirestoreQuery(COLLECTIONS.ASSESSMENTS);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading assessments...</div>
+      </div>
+    );
+  }
+
   const upcoming = assessments.filter((a) => a.status === "upcoming");
   const completed = assessments.filter((a) => a.status === "completed");
 

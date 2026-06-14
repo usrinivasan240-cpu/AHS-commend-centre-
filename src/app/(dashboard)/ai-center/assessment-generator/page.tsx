@@ -37,6 +37,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -172,6 +174,7 @@ const mockQuestions: GeneratedQuestion[] = [
 ];
 
 export default function AssessmentGeneratorPage() {
+  const { add } = useFirestoreActions(COLLECTIONS.ASSESSMENTS);
   const [form, setForm] = useState({
     subject: "",
     topic: "",
@@ -185,12 +188,27 @@ export default function AssessmentGeneratorPage() {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState("form");
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsGenerating(true);
-    setTimeout(() => {
-      setGeneratedQuestions(mockQuestions.slice(0, form.numberOfQuestions));
+    setTimeout(async () => {
+      const questions = mockQuestions.slice(0, form.numberOfQuestions);
+      setGeneratedQuestions(questions);
       setIsGenerating(false);
       setActiveTab("preview");
+
+      try {
+        await add({
+          title: `${form.subject} - ${form.topic}`,
+          type: form.questionType,
+          difficulty: form.difficulty,
+          questionCount: form.numberOfQuestions,
+          questions,
+          totalMarks: questions.reduce((sum, q) => sum + q.marks, 0),
+          status: "completed",
+        });
+      } catch (err) {
+        console.error("Failed to save assessment:", err);
+      }
     }, 2000);
   };
 

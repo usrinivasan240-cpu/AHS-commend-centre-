@@ -16,6 +16,7 @@ import {
   Globe,
   Save,
   ArrowLeft,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 
 import Link from "next/link";
 
@@ -76,6 +79,7 @@ const questionTypes = [
 ];
 
 export default function TestBuilderPage() {
+  const { add, loading: saving } = useFirestoreActions(COLLECTIONS.ASSESSMENTS);
   const [title, setTitle] = useState("");
   const [type] = useState("mcq");
   const [duration, setDuration] = useState("60");
@@ -97,6 +101,32 @@ export default function TestBuilderPage() {
     );
   };
 
+  const buildAssessmentData = (status: string) => ({
+    title,
+    type,
+    duration: Number(duration),
+    totalMarks: Number(totalMarks),
+    passingMarks: Number(passingMarks),
+    scheduledDate: scheduleDate,
+    description,
+    status,
+    attempts: 0,
+    questionTypes: selectedTypes,
+    antiCheat: { timerEnabled, randomize, activityMonitoring, browserFocus },
+  });
+
+  const handleSaveDraft = async () => {
+    if (!title.trim()) return;
+    await add(buildAssessmentData("draft"));
+    alert("Draft saved!");
+  };
+
+  const handlePublish = async () => {
+    if (!title.trim()) return;
+    await add(buildAssessmentData("upcoming"));
+    alert("Assessment published!");
+  };
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
       <motion.div variants={fadeInUp} className="flex items-center justify-between">
@@ -112,9 +142,12 @@ export default function TestBuilderPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => alert('Draft saved!')}>Save Draft</Button>
-          <Button onClick={() => alert('Assessment published!')}>
-            <Save className="mr-2 h-4 w-4" />
+          <Button variant="outline" onClick={handleSaveDraft} disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Save Draft
+          </Button>
+          <Button onClick={handlePublish} disabled={saving || !title.trim()}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Publish
           </Button>
         </div>

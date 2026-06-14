@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Trophy,
@@ -21,7 +21,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { members, teams } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, getInitials, getScoreColor } from "@/lib/utils";
 import {
   BarChart,
@@ -61,9 +62,12 @@ const formulaWeights = [
 ];
 
 export default function PerformancePage() {
+  const { data: members, loading: membersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { data: teams } = useFirestoreQuery(COLLECTIONS.TEAMS);
+
   const sortedMembers = useMemo(
-    () => [...members].sort((a, b) => b.performanceScore - a.performanceScore),
-    []
+    () => [...members].sort((a, b) => (b.performanceScore || 0) - (a.performanceScore || 0)),
+    [members]
   );
 
   const topPerformers = sortedMembers.slice(0, 3);
@@ -71,17 +75,17 @@ export default function PerformancePage() {
   const teamScores = useMemo(() => {
     return teams.map((team) => {
       const teamMembers = members.filter((m) => m.team === team.name.replace(" Team", ""));
-      const avg = teamMembers.reduce((sum, m) => sum + m.performanceScore, 0) / teamMembers.length;
+      const avg = teamMembers.length > 0 ? teamMembers.reduce((sum, m) => sum + (m.performanceScore || 0), 0) / teamMembers.length : 0;
       return {
         name: team.name.replace(" Team", ""),
         score: Math.round(avg),
-        assessment: Math.round(avg * 0.95 + Math.random() * 5),
-        project: Math.round(avg * 0.9 + Math.random() * 10),
-        attendance: Math.round(avg * 0.85 + Math.random() * 15),
-        leadership: Math.round(avg * 0.8 + Math.random() * 20),
+        assessment: Math.round(avg * 0.95 + ((avg * 7) % 5)),
+        project: Math.round(avg * 0.9 + ((avg * 13) % 10)),
+        attendance: Math.round(avg * 0.85 + ((avg * 17) % 15)),
+        leadership: Math.round(avg * 0.8 + ((avg * 23) % 20)),
       };
     });
-  }, []);
+  }, [teams, members]);
 
   const distribution = useMemo(() => {
     const ranges = [
@@ -92,21 +96,29 @@ export default function PerformancePage() {
       { range: "Below 60", count: 0, fill: "#ef4444" },
     ];
     members.forEach((m) => {
-      if (m.performanceScore >= 90) ranges[0].count++;
-      else if (m.performanceScore >= 80) ranges[1].count++;
-      else if (m.performanceScore >= 70) ranges[2].count++;
-      else if (m.performanceScore >= 60) ranges[3].count++;
+      const score = m.performanceScore || 0;
+      if (score >= 90) ranges[0].count++;
+      else if (score >= 80) ranges[1].count++;
+      else if (score >= 70) ranges[2].count++;
+      else if (score >= 60) ranges[3].count++;
       else ranges[4].count++;
     });
     return ranges;
-  }, []);
+  }, [members]);
 
-  const avgScore = Math.round(
-    members.reduce((sum, m) => sum + m.performanceScore, 0) / members.length
-  );
+  const avgScore = members.length > 0 ? Math.round(
+    members.reduce((sum, m) => sum + (m.performanceScore || 0), 0) / members.length
+  ) : 0;
 
-  const medalColors = ["text-yellow-400", "text-gray-300", "text-amber-600"];
   const medalLabels = ["🥇", "🥈", "🥉"];
+
+  if (membersLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -191,7 +203,7 @@ export default function PerformancePage() {
           },
           {
             label: "Above 80%",
-            value: members.filter((m) => m.performanceScore >= 80).length,
+            value: members.filter((m) => (m.performanceScore || 0) >= 80).length,
             icon: TrendingUp,
             color: "text-emerald-400",
             bg: "bg-emerald-400/10",
@@ -271,8 +283,8 @@ export default function PerformancePage() {
                   </Avatar>
                   <h3 className="font-semibold text-white">{member.name}</h3>
                   <p className="text-xs text-muted">{member.team} Team</p>
-                  <p className={cn("mt-2 text-2xl font-bold", getScoreColor(member.performanceScore))}>
-                    {member.performanceScore}%
+                  <p className={cn("mt-2 text-2xl font-bold", getScoreColor(member.performanceScore || 0))}>
+                    {member.performanceScore || 0}%
                   </p>
                   <Badge variant="outline" className="mt-2 text-[10px]">
                     {member.role}

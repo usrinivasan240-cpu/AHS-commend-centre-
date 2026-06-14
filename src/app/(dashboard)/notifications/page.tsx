@@ -16,6 +16,7 @@ import {
   Settings,
   Zap,
   Briefcase,
+  Loader2,
 } from "lucide-react";
 import {
   Card,
@@ -26,8 +27,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { notifications as initialNotifications } from "@/lib/mock-data";
-import type { Notification } from "@/types";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn } from "@/lib/utils";
 
 const fadeInUp = {
@@ -50,10 +51,7 @@ const listItem = {
   exit: { opacity: 0, x: 20, transition: { duration: 0.2 } },
 };
 
-const typeIcons: Record<
-  Notification["type"],
-  React.ComponentType<{ className?: string }>
-> = {
+const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   project: Briefcase,
   assessment: FileText,
   lead: Users,
@@ -62,7 +60,7 @@ const typeIcons: Record<
   system: Settings,
 };
 
-const typeColors: Record<Notification["type"], string> = {
+const typeColors: Record<string, string> = {
   project: "bg-primary/10 text-primary",
   assessment: "bg-secondary/10 text-secondary",
   lead: "bg-emerald-500/10 text-emerald-400",
@@ -72,7 +70,7 @@ const typeColors: Record<Notification["type"], string> = {
 };
 
 function formatTimeAgo(dateStr: string): string {
-  const now = new Date("2024-08-16T12:00:00");
+  const now = new Date();
   const date = new Date(dateStr);
   const diffMs = now.getTime() - date.getTime();
   const diffMin = Math.floor(diffMs / 60000);
@@ -87,32 +85,43 @@ function formatTimeAgo(dateStr: string): string {
 }
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] =
-    useState<Notification[]>(initialNotifications);
+  const { data: notifications, loading } = useFirestoreQuery(COLLECTIONS.NOTIFICATIONS);
+  const { update, remove } = useFirestoreActions(COLLECTIONS.NOTIFICATIONS);
   const [activeFilter, setActiveFilter] = useState<string>("all");
 
   const unreadCount = useMemo(
-    () => notifications.filter((n) => !n.read).length,
+    () => notifications.filter((n: any) => !n.read).length,
     [notifications]
   );
 
   const filtered = useMemo(() => {
     if (activeFilter === "all") return notifications;
-    return notifications.filter((n) => n.type === activeFilter);
+    return notifications.filter((n: any) => n.type === activeFilter);
   }, [notifications, activeFilter]);
 
-  const toggleRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n))
-    );
+  const toggleRead = async (id: string, currentRead: boolean) => {
+    try {
+      await update(id, { read: !currentRead });
+    } catch (err) {
+      console.error("Failed to toggle read:", err);
+    }
   };
 
-  const markAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  const markAllRead = async () => {
+    const unread = notifications.filter((n: any) => !n.read);
+    try {
+      await Promise.all(unread.map((n: any) => update(n.id, { read: true })));
+    } catch (err) {
+      console.error("Failed to mark all read:", err);
+    }
   };
 
-  const deleteNotification = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  const deleteNotification = async (id: string) => {
+    try {
+      await remove(id);
+    } catch (err) {
+      console.error("Failed to delete:", err);
+    }
   };
 
   return (
@@ -153,6 +162,13 @@ export default function NotificationsPage() {
           </Button>
         </div>
       </motion.div>
+
+      {loading && (
+        <motion.div variants={fadeInUp} className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+          <span className="ml-3 text-muted">Loading notifications...</span>
+        </motion.div>
+      )}
 
       {/* Filter Tabs */}
       <motion.div variants={fadeInUp}>
@@ -195,7 +211,7 @@ export default function NotificationsPage() {
           <CardContent className="p-0">
             <div className="divide-y divide-border/50">
               <AnimatePresence mode="popLayout">
-                {filtered.map((notification) => {
+                {filtered.map((notification: any) => {
                   const Icon = typeIcons[notification.type] || Bell;
                   return (
                     <motion.div
@@ -258,7 +274,7 @@ export default function NotificationsPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => toggleRead(notification.id)}
+                          onClick={() => toggleRead(notification.id, notification.read)}
                           title={
                             notification.read
                               ? "Mark as unread"

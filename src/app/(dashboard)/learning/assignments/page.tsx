@@ -36,7 +36,8 @@ import {
   DialogFooter,
 
 } from "@/components/ui/dialog";
-import { courses } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate } from "@/lib/utils";
 
 const fadeInUp = {
@@ -87,6 +88,7 @@ const statusIcon: Record<string, typeof ClipboardList> = {
 };
 
 export default function AssignmentsPage() {
+  const { data: courses } = useFirestoreQuery(COLLECTIONS.COURSES);
   const [tab, setTab] = useState("active");
   const [search, setSearch] = useState("");
   const [courseFilter, setCourseFilter] = useState("all");

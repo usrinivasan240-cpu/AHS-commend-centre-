@@ -45,9 +45,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { leads as initialLeads } from "@/lib/mock-data";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
-import type { Lead } from "@/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -84,7 +84,8 @@ const sourceColors: Record<string, string> = {
 };
 
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>(initialLeads);
+  const { data: leads, loading } = useFirestoreQuery(COLLECTIONS.LEADS);
+  const { add: addLeadToFirestore, update: updateLeadInFirestore } = useFirestoreActions(COLLECTIONS.LEADS);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -96,7 +97,7 @@ export default function LeadsPage() {
     company: "",
     email: "",
     phone: "",
-    source: "website" as Lead["source"],
+    source: "website" as string,
     value: "",
     notes: "",
   });
@@ -107,26 +108,26 @@ export default function LeadsPage() {
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
-        (l) =>
-          l.name.toLowerCase().includes(q) ||
-          l.company.toLowerCase().includes(q) ||
-          l.email.toLowerCase().includes(q)
+        (l: any) =>
+          l.name?.toLowerCase().includes(q) ||
+          l.company?.toLowerCase().includes(q) ||
+          l.email?.toLowerCase().includes(q)
       );
     }
 
     if (statusFilter !== "all") {
-      result = result.filter((l) => l.status === statusFilter);
+      result = result.filter((l: any) => l.status === statusFilter);
     }
 
     if (sourceFilter !== "all") {
-      result = result.filter((l) => l.source === sourceFilter);
+      result = result.filter((l: any) => l.source === sourceFilter);
     }
 
-    result.sort((a, b) => {
+    result.sort((a: any, b: any) => {
       let cmp = 0;
-      if (sortField === "name") cmp = a.name.localeCompare(b.name);
-      else if (sortField === "value") cmp = a.value - b.value;
-      else cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (sortField === "name") cmp = (a.name || "").localeCompare(b.name || "");
+      else if (sortField === "value") cmp = (a.value || 0) - (b.value || 0);
+      else cmp = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
       return sortDir === "asc" ? cmp : -cmp;
     });
 
@@ -152,36 +153,40 @@ export default function LeadsPage() {
     );
   };
 
-  const updateStatus = (leadId: string, newStatus: Lead["status"]) => {
-    setLeads((prev) =>
-      prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l))
-    );
+  const updateStatus = async (leadId: string, newStatus: string) => {
+    try {
+      await updateLeadInFirestore(leadId, { status: newStatus });
+    } catch (err) {
+      console.error("Failed to update lead status:", err);
+    }
   };
 
-  const addLead = () => {
+  const handleAddLead = async () => {
     if (!newLead.name || !newLead.company) return;
-    const lead: Lead = {
-      id: String(leads.length + 1),
-      name: newLead.name,
-      company: newLead.company,
-      email: newLead.email,
-      phone: newLead.phone,
-      source: newLead.source,
-      status: "new",
-      value: Number(newLead.value) || 0,
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    setLeads((prev) => [...prev, lead]);
-    setNewLead({
-      name: "",
-      company: "",
-      email: "",
-      phone: "",
-      source: "website",
-      value: "",
-      notes: "",
-    });
-    setDialogOpen(false);
+    try {
+      await addLeadToFirestore({
+        name: newLead.name,
+        company: newLead.company,
+        email: newLead.email,
+        phone: newLead.phone,
+        source: newLead.source,
+        status: "new",
+        value: Number(newLead.value) || 0,
+        createdAt: new Date().toISOString().split("T")[0],
+      });
+      setNewLead({
+        name: "",
+        company: "",
+        email: "",
+        phone: "",
+        source: "website",
+        value: "",
+        notes: "",
+      });
+      setDialogOpen(false);
+    } catch (err) {
+      console.error("Failed to add lead:", err);
+    }
   };
 
   return (
@@ -197,7 +202,7 @@ export default function LeadsPage() {
             <span className="gradient-text">Leads</span> Pipeline
           </h1>
           <p className="mt-1 text-muted">
-            {filteredLeads.length} lead{filteredLeads.length !== 1 ? "s" : ""} in pipeline
+            {loading ? "Loading..." : `${filteredLeads.length} lead${filteredLeads.length !== 1 ? "s" : ""} in pipeline`}
           </p>
         </div>
         <Button onClick={() => setDialogOpen(true)} className="gap-2">
@@ -325,7 +330,7 @@ export default function LeadsPage() {
                           <Select
                             value={lead.status}
                             onValueChange={(v) =>
-                              updateStatus(lead.id, v as Lead["status"])
+                              updateStatus(lead.id, v)
                             }
                           >
                             <SelectTrigger className="h-8 w-auto min-w-[110px] text-[10px] border-transparent bg-transparent hover:border-border">
@@ -432,7 +437,7 @@ export default function LeadsPage() {
                 <Select
                   value={newLead.source}
                   onValueChange={(v) =>
-                    setNewLead({ ...newLead, source: v as Lead["source"] })
+                    setNewLead({ ...newLead, source: v as string })
                   }
                 >
                   <SelectTrigger>
@@ -475,7 +480,7 @@ export default function LeadsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={addLead}>Add Lead</Button>
+            <Button onClick={handleAddLead}>Add Lead</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

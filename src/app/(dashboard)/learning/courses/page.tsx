@@ -5,9 +5,10 @@ import { motion } from "framer-motion";
 import {
   Search,
   BookOpen,
-
   ArrowUpDown,
   X,
+  Plus,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { courses } from "@/lib/mock-data";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 
 
 const fadeInUp = {
@@ -60,9 +72,19 @@ const trackBadgeVariant: Record<string, "default" | "secondary" | "success" | "w
 };
 
 export default function CoursesPage() {
+  const { data: courses, loading } = useFirestoreQuery(COLLECTIONS.COURSES);
+  const { add, loading: addingCourse } = useFirestoreActions(COLLECTIONS.COURSES);
   const [search, setSearch] = useState("");
   const [track, setTrack] = useState("all");
   const [sortBy, setSortBy] = useState("progress");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [newCourse, setNewCourse] = useState({
+    title: "",
+    description: "",
+    track: "frontend",
+    difficulty: "beginner",
+    totalLessons: 10,
+  });
 
   const filtered = useMemo(() => {
     let result = [...courses];
@@ -83,8 +105,8 @@ export default function CoursesPage() {
     result.sort((a, b) => {
       if (sortBy === "progress") return b.progress - a.progress;
       if (sortBy === "difficulty") {
-        const order = { beginner: 1, intermediate: 2, advanced: 3 };
-        return (order[b.difficulty] || 0) - (order[a.difficulty] || 0);
+        const order: Record<string, number> = { beginner: 1, intermediate: 2, advanced: 3 };
+        return (order[b.difficulty as string] || 0) - (order[a.difficulty as string] || 0);
       }
       return a.title.localeCompare(b.title);
     });
@@ -94,11 +116,42 @@ export default function CoursesPage() {
 
   const hasFilters = search || track !== "all";
 
+  const handleCreateCourse = async () => {
+    if (!newCourse.title.trim()) return;
+    await add({
+      title: newCourse.title,
+      description: newCourse.description,
+      track: newCourse.track,
+      difficulty: newCourse.difficulty,
+      totalLessons: Number(newCourse.totalLessons),
+      completedLessons: 0,
+      progress: 0,
+    });
+    setNewCourse({ title: "", description: "", track: "frontend", difficulty: "beginner", totalLessons: 10 });
+    setDialogOpen(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading courses...</div>
+      </div>
+    );
+  }
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
       <motion.div variants={fadeInUp}>
-        <h1 className="text-3xl font-bold tracking-tight text-white">Courses</h1>
-        <p className="mt-1 text-[#64748b]">Browse and enroll in courses across all tracks</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-white">Courses</h1>
+            <p className="mt-1 text-[#64748b]">Browse and enroll in courses across all tracks</p>
+          </div>
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Course
+          </Button>
+        </div>
       </motion.div>
 
       {/* Filters */}
@@ -205,6 +258,83 @@ export default function CoursesPage() {
           </TabsContent>
         </Tabs>
       </motion.div>
+
+      {/* Create Course Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Course</DialogTitle>
+            <DialogDescription>Add a new course to the learning platform</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Title</Label>
+              <Input
+                placeholder="e.g., React Advanced Patterns"
+                value={newCourse.title}
+                onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                placeholder="Brief description of the course..."
+                value={newCourse.description}
+                onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Track</Label>
+                <Select value={newCourse.track} onValueChange={(v) => setNewCourse({ ...newCourse, track: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="frontend">Frontend</SelectItem>
+                    <SelectItem value="backend">Backend</SelectItem>
+                    <SelectItem value="ai">AI/ML</SelectItem>
+                    <SelectItem value="ui-ux">UI/UX</SelectItem>
+                    <SelectItem value="cloud">Cloud</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Difficulty</Label>
+                <Select value={newCourse.difficulty} onValueChange={(v) => setNewCourse({ ...newCourse, difficulty: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="beginner">Beginner</SelectItem>
+                    <SelectItem value="intermediate">Intermediate</SelectItem>
+                    <SelectItem value="advanced">Advanced</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Total Lessons</Label>
+              <Input
+                type="number"
+                value={newCourse.totalLessons}
+                onChange={(e) => setNewCourse({ ...newCourse, totalLessons: Number(e.target.value) })}
+                min={1}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateCourse} disabled={!newCourse.title.trim() || addingCourse}>
+              {addingCourse ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              Create Course
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

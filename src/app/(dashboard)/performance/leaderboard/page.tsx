@@ -9,7 +9,6 @@ import {
   Minus,
   ArrowLeft,
   Filter,
-  Crown,
 } from "lucide-react";
 import {
   Card,
@@ -20,7 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -28,7 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { members } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, getInitials, getScoreColor } from "@/lib/utils";
 import Link from "next/link";
 
@@ -57,8 +57,8 @@ function getTrend() {
   return "stable";
 }
 
-function getScoreForPeriod(member: (typeof members)[0], period: TimePeriod) {
-  const base = member.performanceScore;
+function getScoreForPeriod(member: { performanceScore?: number; name?: string; team?: string; role?: string; id?: string }, period: TimePeriod) {
+  const base = member.performanceScore || 0;
   switch (period) {
     case "weekly":
       return Math.min(100, Math.max(0, base + Math.round((Math.random() - 0.4) * 8)));
@@ -76,9 +76,15 @@ export default function LeaderboardPage() {
   const [teamFilter, setTeamFilter] = useState("All");
   const currentUserId = "1";
 
+  const { data: members, loading: membersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+
   const leaderboardData = useMemo(() => {
     const data = members.map((m) => ({
-      ...m,
+      id: m.id,
+      name: m["name"] as string,
+      team: m["team"] as string,
+      role: m["role"] as string,
+      performanceScore: m.performanceScore,
       displayScore: getScoreForPeriod(m, period),
       trend: getTrend(),
     }));
@@ -89,9 +95,17 @@ export default function LeaderboardPage() {
         : data.filter((m) => m.team === teamFilter);
 
     return filtered.sort((a, b) => b.displayScore - a.displayScore);
-  }, [period, teamFilter]);
+  }, [members, period, teamFilter]);
 
   const medalIcons = ["🥇", "🥈", "🥉"];
+
+  if (membersLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <motion.div

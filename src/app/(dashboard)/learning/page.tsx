@@ -15,7 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { courses } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn } from "@/lib/utils";
 import {
   PieChart,
@@ -54,10 +55,20 @@ const difficultyVariant: Record<string, "default" | "secondary" | "success" | "w
 const pieColors = ["#0066ff", "#00d9ff", "#7fff00", "#f59e0b", "#ef4444"];
 
 export default function LearningDashboardPage() {
+  const { data: courses, loading } = useFirestoreQuery(COLLECTIONS.COURSES);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading courses...</div>
+      </div>
+    );
+  }
+
   const totalCourses = courses.length;
   const inProgress = courses.filter((c) => c.progress > 0 && c.progress < 100).length;
   const completed = courses.filter((c) => c.progress === 100).length;
-  const avgProgress = Math.round(courses.reduce((s, c) => s + c.progress, 0) / totalCourses);
+  const avgProgress = totalCourses ? Math.round(courses.reduce((s, c) => s + c.progress, 0) / totalCourses) : 0;
 
   const tracks = ["frontend", "backend", "ai", "ui-ux", "cloud"] as const;
   const trackProgress = tracks.map((track) => {

@@ -28,7 +28,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { members, projects, leads, aiInsights, tasks, sprints, meetings } from "@/lib/mock-data";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   BarChart,
@@ -54,43 +55,29 @@ const staggerContainer = {
   },
 };
 
-const stats = [
-  {
-    label: "Total Members",
-    value: members.length,
-    change: "+2 this month",
-    trend: "up" as const,
-    icon: Users,
-    color: "text-primary",
-    bgColor: "bg-primary/10",
-  },
-  {
-    label: "Active Projects",
-    value: projects.filter((p) => p.status === "in-progress").length,
-    change: "+1 this week",
-    trend: "up" as const,
-    icon: FolderKanban,
-    color: "text-secondary",
-    bgColor: "bg-secondary/10",
-  },
-  {
-    label: "Revenue",
-    value: formatCurrency(1380000),
-    change: "+18.2% from last month",
-    trend: "up" as const,
-    icon: IndianRupee,
-    color: "text-success",
-    bgColor: "bg-success/10",
-  },
-  {
-    label: "New Leads",
-    value: leads.filter((l) => l.status === "new" || l.status === "qualified").length,
-    change: "+3 this week",
-    trend: "up" as const,
-    icon: UserPlus,
-    color: "text-warning",
-    bgColor: "bg-warning/10",
-  },
+// Stats are computed dynamically from Firestore data inside the component
+
+const aiInsights = [
+  { id: "1", type: "warning", title: "Project Delayed", description: "Cloud Migration is delayed by 4 days. Consider reallocating resources.", metric: "4 days" },
+  { id: "2", type: "success", title: "Internship Ready", description: "3 trainees (Sneha, Deepak, Kavya) are ready for internship promotion.", metric: "3 trainees" },
+  { id: "3", type: "recommendation", title: "Revenue Opportunity", description: "FinServe lead is highly qualified. Schedule a demo this week.", metric: "₹3,80,000" },
+  { id: "4", type: "info", title: "Team Performance", description: "Frontend team leads with 84% average performance this quarter.", metric: "84%" },
+  { id: "5", type: "warning", title: "Overdue Invoice", description: "INV-003 from DataFlow (₹2,10,000) is 15 days overdue.", metric: "₹2,10,000" },
+];
+
+const recentActivity = [
+  { id: 1, user: "Karthik", action: "completed task", target: "Dashboard widgets", time: "2 hours ago", type: "task" },
+  { id: 2, user: "Priya", action: "created project", target: "Mobile App MVP", time: "5 hours ago", type: "project" },
+  { id: 3, user: "Divya", action: "submitted review", target: "AI Chatbot Integration", time: "1 day ago", type: "review" },
+  { id: 4, user: "Vikram", action: "updated status", target: "Cloud Migration", time: "1 day ago", type: "status" },
+  { id: 5, user: "Nisha", action: "completed course", target: "React Fundamentals", time: "2 days ago", type: "course" },
+];
+
+const teamPerformance = [
+  { name: "Core", performance: 91 },
+  { name: "Frontend", performance: 84 },
+  { name: "Backend", performance: 82 },
+  { name: "AI/ML", performance: 78 },
 ];
 
 const insightIcons = {
@@ -127,27 +114,7 @@ const insightColors = {
   },
 };
 
-const recentActivity = [
-  { id: 1, user: "Karthik", action: "completed task", target: "Dashboard widgets", time: "2 hours ago", type: "task" },
-  { id: 2, user: "Priya", action: "created project", target: "Mobile App MVP", time: "5 hours ago", type: "project" },
-  { id: 3, user: "Divya", action: "submitted review", target: "AI Chatbot Integration", time: "1 day ago", type: "review" },
-  { id: 4, user: "Vikram", action: "updated status", target: "Cloud Migration", time: "1 day ago", type: "status" },
-  { id: 5, user: "Nisha", action: "completed course", target: "React Fundamentals", time: "2 days ago", type: "course" },
-];
-
-const teamPerformance = [
-  { name: "Core", performance: 91 },
-  { name: "Frontend", performance: 84 },
-  { name: "Backend", performance: 82 },
-  { name: "AI/ML", performance: 78 },
-];
-
-const upcomingDeadlines = [
-  { task: "Dashboard widgets delivery", due: "Aug 15, 2024", project: "AHS Command Center", daysLeft: 2 },
-  { task: "Product catalog review", due: "Aug 30, 2024", project: "E-Commerce Platform", daysLeft: 17 },
-  { task: "React assessment", due: "Aug 20, 2024", project: "Learning", daysLeft: 7 },
-  { task: "Payment gateway integration", due: "Sep 15, 2024", project: "E-Commerce Platform", daysLeft: 33 },
-];
+// upcomingDeadlines is computed dynamically from Firestore tasks inside the component
 
 const quickActions = [
   { label: "Add Member", icon: Users, color: "bg-primary/10 text-primary hover:bg-primary/20", href: "/people" },
@@ -158,6 +125,79 @@ const quickActions = [
 
 export default function DashboardPage() {
   const [currentDate, setCurrentDate] = useState("");
+
+  const { data: membersData, loading: membersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { data: projectsData, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: leadsData, loading: leadsLoading } = useFirestoreQuery(COLLECTIONS.LEADS);
+  const { data: tasksData, loading: tasksLoading } = useFirestoreQuery(COLLECTIONS.TASKS);
+  const { data: invoicesData, loading: invoicesLoading } = useFirestoreQuery(COLLECTIONS.INVOICES);
+
+  const loading = membersLoading || projectsLoading || leadsLoading || tasksLoading || invoicesLoading;
+
+  const totalRevenue = (invoicesData || []).reduce(
+    (sum, inv) => sum + (inv.status === "paid" ? inv.amount : 0),
+    0
+  );
+
+  const pendingTasks = (tasksData || []).filter(
+    (t) => t.status !== "completed" && t.status !== "backlog"
+  );
+
+  const upcomingDeadlines = pendingTasks
+    .filter((t) => t.dueDate)
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+    .slice(0, 4)
+    .map((t) => {
+      const project = projectsData?.find((p) => p.id === t.projectId);
+      const daysLeft = Math.ceil(
+        (new Date(t.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      return {
+        task: t.title,
+        due: formatDate(t.dueDate),
+        project: project?.name || "Unknown",
+        daysLeft: Math.max(0, daysLeft),
+      };
+    });
+
+  const stats = [
+    {
+      label: "Total Members",
+      value: membersData?.length || 0,
+      change: "+2 this month",
+      trend: "up" as const,
+      icon: Users,
+      color: "text-primary",
+      bgColor: "bg-primary/10",
+    },
+    {
+      label: "Active Projects",
+      value: (projectsData || []).filter((p) => p.status === "in-progress").length,
+      change: "+1 this week",
+      trend: "up" as const,
+      icon: FolderKanban,
+      color: "text-secondary",
+      bgColor: "bg-secondary/10",
+    },
+    {
+      label: "Revenue",
+      value: formatCurrency(totalRevenue),
+      change: "+18.2% from last month",
+      trend: "up" as const,
+      icon: IndianRupee,
+      color: "text-success",
+      bgColor: "bg-success/10",
+    },
+    {
+      label: "New Leads",
+      value: (leadsData || []).filter((l) => l.status === "new" || l.status === "qualified").length,
+      change: "+3 this week",
+      trend: "up" as const,
+      icon: UserPlus,
+      color: "text-warning",
+      bgColor: "bg-warning/10",
+    },
+  ];
 
   useEffect(() => {
     setCurrentDate(
@@ -186,6 +226,21 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Stats Grid */}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} className="card-hover">
+              <CardContent className="p-6">
+                <div className="animate-pulse space-y-3">
+                  <div className="h-12 w-12 rounded-xl bg-border/50" />
+                  <div className="h-8 w-20 rounded bg-border/50" />
+                  <div className="h-4 w-32 rounded bg-border/50" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
       <motion.div
         variants={fadeInUp}
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
@@ -217,6 +272,7 @@ export default function DashboardPage() {
           );
         })}
       </motion.div>
+      )}
 
       {/* AI Insights */}
       <motion.div variants={fadeInUp}>
@@ -226,8 +282,8 @@ export default function DashboardPage() {
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {aiInsights.map((insight) => {
-            const Icon = insightIcons[insight.type];
-            const colors = insightColors[insight.type];
+            const Icon = insightIcons[insight.type as keyof typeof insightIcons];
+            const colors = insightColors[insight.type as keyof typeof insightColors];
             return (
               <Card
                 key={insight.id}
@@ -423,11 +479,10 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-white">
-                      {sprints.find((s) => s.status === "active")?.name || "No Active Sprint"}
+                      Sprint 6 - Dashboard &amp; People
                     </p>
                     <p className="mt-0.5 text-xs text-muted">
-                      {sprints.find((s) => s.status === "active")?.completedTasks} of{" "}
-                      {sprints.find((s) => s.status === "active")?.totalTasks} tasks completed
+                      {pendingTasks.length} of {(tasksData || []).length} tasks remaining
                     </p>
                   </div>
                   <Badge variant="success">Active</Badge>
@@ -436,7 +491,9 @@ export default function DashboardPage() {
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-primary to-secondary"
                     style={{
-                      width: `${((sprints.find((s) => s.status === "active")?.completedTasks || 0) / (sprints.find((s) => s.status === "active")?.totalTasks || 1)) * 100}%`,
+                      width: `${tasksData && tasksData.length > 0
+                        ? ((tasksData.length - pendingTasks.length) / tasksData.length) * 100
+                        : 0}%`,
                     }}
                   />
                 </div>

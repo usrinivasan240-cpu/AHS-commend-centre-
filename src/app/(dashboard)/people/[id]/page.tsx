@@ -24,7 +24,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { members, projects, tasks, assessments, teams } from "@/lib/mock-data";
+import { useFirestoreDoc, useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate, getInitials } from "@/lib/utils";
 import type { Role, MemberStatus } from "@/types";
 
@@ -149,32 +150,54 @@ const monthlyAttendance = [
 export default function MemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
-  const member = useMemo(() => members.find((m) => m.id === id), [id]);
+  const { data: member, loading: memberLoading } = useFirestoreDoc(COLLECTIONS.USERS, id);
+  const { data: allTasks, loading: tasksLoading } = useFirestoreQuery(COLLECTIONS.TASKS);
+  const { data: allProjects, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
+  const { data: allTeams, loading: teamsLoading } = useFirestoreQuery(COLLECTIONS.TEAMS);
+  const { data: allAssessments, loading: assessmentsLoading } = useFirestoreQuery(COLLECTIONS.ASSESSMENTS);
 
-  const memberProjects = useMemo(
-    () => projects.filter((p) => {
-      const memberTasks = tasks.filter((t) => t.assigneeId === id);
-      return memberTasks.some((t) => t.projectId === p.id);
-    }),
-    [id]
+  const loading = memberLoading || tasksLoading || projectsLoading || teamsLoading || assessmentsLoading;
+
+  const memberTasks = useMemo(
+    () => (allTasks || []).filter((t: any) => t.assigneeId === id),
+    [allTasks, id]
   );
 
-  const memberTasks = useMemo(() => tasks.filter((t) => t.assigneeId === id), [id]);
+  const memberProjects = useMemo(
+    () => {
+      const projectIds = new Set(memberTasks.map((t: any) => t.projectId));
+      return (allProjects || []).filter((p: any) => projectIds.has(p.id));
+    },
+    [allProjects, memberTasks]
+  );
+
+  const memberTeam = useMemo(
+    () => (allTeams || []).find((t: any) => t.name?.replace(" Team", "") === (member as any)?.team),
+    [allTeams, member]
+  );
 
   const assessmentScores = useMemo(
     () =>
-      assessments.reduce(
-        (acc, a) => {
-          const hash = a.id.split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
+      (allAssessments || []).reduce(
+        (acc: Record<string, number>, a: any) => {
+          const hash = a.id.split("").reduce((h: number, c: string) => (h * 31 + c.charCodeAt(0)) | 0, 0);
           acc[a.id] = Math.abs(hash) % 40 + 60;
           return acc;
         },
         {} as Record<string, number>
       ),
-    []
+    [allAssessments]
   );
 
-  const memberTeam = useMemo(() => teams.find((t) => t.name.replace(" Team", "") === member?.team), [member]);
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <p className="mt-4 text-muted">Loading member profile...</p>
+      </div>
+    );
+  }
+
   if (!member) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -191,8 +214,9 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
     );
   }
 
-  const completedTasks = memberTasks.filter((t) => t.status === "completed").length;
-  const inProgressTasks = memberTasks.filter((t) => t.status === "in-progress").length;
+  const m = member as any;
+  const completedTasks = memberTasks.filter((t: any) => t.status === "completed").length;
+  const inProgressTasks = memberTasks.filter((t: any) => t.status === "in-progress").length;
 
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
@@ -212,33 +236,33 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
           <CardContent className="p-6">
             <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center">
               <Avatar className="h-20 w-20 border-2 border-primary/30">
-                <AvatarImage src={member.avatar} alt={member.name} />
+                <AvatarImage src={m.avatar} alt={m.name} />
                 <AvatarFallback className="text-xl bg-primary/10 text-primary">
-                  {getInitials(member.name)}
+                  {getInitials(m.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="text-2xl font-bold text-white">{member.name}</h1>
-                  <Badge variant={roleBadgeVariant[member.role]}>{roleLabels[member.role]}</Badge>
-                  <Badge variant={statusVariant[member.status]}>{member.status}</Badge>
+                  <h1 className="text-2xl font-bold text-white">{m.name}</h1>
+                  <Badge variant={roleBadgeVariant[m.role as Role]}>{roleLabels[m.role as Role]}</Badge>
+                  <Badge variant={statusVariant[m.status as MemberStatus]}>{m.status}</Badge>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-muted">
                   <span className="flex items-center gap-1.5">
                     <Mail className="h-3.5 w-3.5" />
-                    {member.email}
+                    {m.email}
                   </span>
                   <span className="flex items-center gap-1.5">
                     <Users className="h-3.5 w-3.5" />
-                    {member.team || "No Team"}
+                    {m.team || "No Team"}
                   </span>
                   <span className="flex items-center gap-1.5">
                     <Calendar className="h-3.5 w-3.5" />
-                    Joined {formatDate(member.joinDate)}
+                    Joined {formatDate(m.joinDate)}
                   </span>
                 </div>
               </div>
-              <PerformanceRing score={member.performanceScore} />
+              <PerformanceRing score={m.performanceScore} />
             </div>
           </CardContent>
         </Card>
@@ -250,7 +274,7 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
           { label: "Projects", value: memberProjects.length, icon: FolderKanban, color: "text-primary", bg: "bg-primary/10" },
           { label: "Tasks Completed", value: completedTasks, icon: CheckCircle, color: "text-success", bg: "bg-success/10" },
           { label: "In Progress", value: inProgressTasks, icon: Clock, color: "text-warning", bg: "bg-warning/10" },
-          { label: "Skills", value: member.skills.length, icon: Award, color: "text-secondary", bg: "bg-secondary/10" },
+          { label: "Skills", value: m.skills?.length || 0, icon: Award, color: "text-secondary", bg: "bg-secondary/10" },
         ].map((stat) => {
           const Icon = stat.icon;
           return (
@@ -294,12 +318,12 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {[
-                    { label: "Full Name", value: member.name },
-                    { label: "Email", value: member.email },
-                    { label: "Role", value: roleLabels[member.role] },
-                    { label: "Team", value: member.team || "Unassigned" },
-                    { label: "Status", value: member.status.charAt(0).toUpperCase() + member.status.slice(1) },
-                    { label: "Join Date", value: formatDate(member.joinDate) },
+                    { label: "Full Name", value: m.name },
+                    { label: "Email", value: m.email },
+                    { label: "Role", value: roleLabels[m.role as Role] },
+                    { label: "Team", value: m.team || "Unassigned" },
+                    { label: "Status", value: (m.status as string)?.charAt(0).toUpperCase() + (m.status as string)?.slice(1) },
+                    { label: "Join Date", value: formatDate(m.joinDate) },
                   ].map((detail) => (
                     <div key={detail.label} className="flex items-center justify-between py-1.5">
                       <span className="text-sm text-muted">{detail.label}</span>
@@ -318,7 +342,7 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-center py-4">
-                    <PerformanceRing score={member.performanceScore} size={140} strokeWidth={10} />
+                    <PerformanceRing score={m.performanceScore} size={140} strokeWidth={10} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     {[
@@ -349,22 +373,22 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
                 <CardContent>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-lg font-semibold text-white">{memberTeam.name}</p>
+                      <p className="text-lg font-semibold text-white">{(memberTeam as any).name}</p>
                       <p className="text-sm text-muted">
-                        {memberTeam.memberCount} members &middot; {memberTeam.projectCount} projects
+                        {(memberTeam as any).memberCount} members &middot; {(memberTeam as any).projectCount} projects
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className={cn("text-2xl font-bold", performanceColor(memberTeam.performance))}>
-                        {memberTeam.performance}%
+                      <p className={cn("text-2xl font-bold", performanceColor((memberTeam as any).performance))}>
+                        {(memberTeam as any).performance}%
                       </p>
                       <p className="text-xs text-muted">Team Performance</p>
                     </div>
                   </div>
                   <div className="mt-4">
                     <Progress
-                      value={memberTeam.performance}
-                      color={memberTeam.performance >= 85 ? "success" : "default"}
+                      value={(memberTeam as any).performance}
+                      color={(memberTeam as any).performance >= 85 ? "success" : "default"}
                     />
                   </div>
                 </CardContent>
@@ -383,8 +407,8 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-3">
-                  {member.skills.map((skill, i) => {
-                    const level = getSkillLevel(i, member.skills.length);
+                  {(m.skills || []).map((skill: string, i: number) => {
+                    const level = getSkillLevel(i, m.skills?.length || 0);
                     return (
                       <div
                         key={skill}
@@ -408,10 +432,10 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
                   <p className="mb-3 text-sm font-medium text-white">Skill Distribution</p>
                   <div className="space-y-3">
                     {["expert", "advanced", "intermediate", "beginner"].map((level) => {
-                      const count = member.skills.filter(
-                        (_, i) => getSkillLevel(i, member.skills.length) === level
+                      const count = (m.skills || []).filter(
+                        (_: string, i: number) => getSkillLevel(i, m.skills?.length || 0) === level
                       ).length;
-                      const pct = member.skills.length > 0 ? (count / member.skills.length) * 100 : 0;
+                      const pct = (m.skills?.length || 0) > 0 ? (count / (m.skills?.length || 1)) * 100 : 0;
                       return (
                         <div key={level}>
                           <div className="mb-1 flex items-center justify-between text-xs">
@@ -510,7 +534,7 @@ export default function MemberProfilePage({ params }: { params: Promise<{ id: st
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {assessments.map((assessment) => {
+                  {(allAssessments || []).map((assessment: any) => {
                     const score = assessmentScores[assessment.id];
                     const passed = score >= assessment.passingMarks;
                     return (

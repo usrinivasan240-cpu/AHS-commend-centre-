@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import {
@@ -10,6 +10,7 @@ import {
   Plus,
   Crown,
   ArrowUpRight,
+  Save,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,26 @@ import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { teams, members } from "@/lib/mock-data";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
+import { firestoreAdd } from "@/lib/firebase/firestore";
 import { cn, getInitials, getScoreColor } from "@/lib/utils";
 
 const fadeInUp = {
@@ -34,18 +54,57 @@ const staggerContainer = {
 };
 
 export default function TeamsPage() {
+  const { data: firestoreTeams, loading: teamsLoading } = useFirestoreQuery(COLLECTIONS.TEAMS);
+  const { data: firestoreMembers, loading: membersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+
+  const loading = teamsLoading || membersLoading;
+
+  const allTeams = useMemo(() => (firestoreTeams || []) as any[], [firestoreTeams]);
+  const allMembers = useMemo(() => (firestoreMembers || []) as any[], [firestoreMembers]);
+
   const teamData = useMemo(
     () =>
-      teams.map((team) => {
-        const lead = members.find((m) => m.id === team.leadId);
-        const teamMembers = members.filter((m) => m.team === team.name.replace(" Team", ""));
+      allTeams.map((team: any) => {
+        const lead = allMembers.find((m: any) => m.id === team.leadId);
+        const teamMembers = allMembers.filter((m: any) => m.team === team.name?.replace(" Team", ""));
         return { ...team, lead, teamMembers };
       }),
-    []
+    [allTeams, allMembers]
   );
 
-  const totalMembers = teams.reduce((s, t) => s + t.memberCount, 0);
-  const avgPerformance = Math.round(teams.reduce((s, t) => s + t.performance, 0) / teams.length);
+  const totalMembers = allTeams.reduce((s: number, t: any) => s + (t.memberCount || 0), 0);
+  const avgPerformance = allTeams.length > 0
+    ? Math.round(allTeams.reduce((s: number, t: any) => s + (t.performance || 0), 0) / allTeams.length)
+    : 0;
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", leadId: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleCreateTeam = async () => {
+    if (!form.name) {
+      setError("Team name is required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await firestoreAdd(COLLECTIONS.TEAMS, {
+        name: form.name,
+        leadId: form.leadId || "",
+        memberCount: 0,
+        projectCount: 0,
+        performance: 0,
+      });
+      setCreateOpen(false);
+      setForm({ name: "", leadId: "" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create team");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <TooltipProvider>
@@ -56,18 +115,16 @@ export default function TeamsPage() {
             <h1 className="text-3xl font-bold tracking-tight text-white">Teams</h1>
             <p className="mt-1 text-muted">Manage your organization teams</p>
           </div>
-          <Link href="/people">
-            <Button>
+          <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Create Team
             </Button>
-          </Link>
         </motion.div>
 
         {/* Summary Stats */}
         <motion.div variants={fadeInUp} className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
-            { label: "Total Teams", value: teams.length, icon: Users, color: "text-primary", bg: "bg-primary/10" },
+            { label: "Total Teams", value: allTeams.length, icon: Users, color: "text-primary", bg: "bg-primary/10" },
             { label: "Total Members", value: totalMembers, icon: Users, color: "text-secondary", bg: "bg-secondary/10" },
             { label: "Avg Performance", value: `${avgPerformance}%`, icon: TrendingUp, color: "text-success", bg: "bg-success/10" },
           ].map((stat) => {
@@ -161,7 +218,7 @@ export default function TeamsPage() {
                       <div>
                         <p className="mb-2 text-xs font-medium text-muted uppercase tracking-wider">Members</p>
                         <div className="flex flex-wrap gap-2">
-                          {team.teamMembers.map((member) => (
+                          {team.teamMembers.map((member: any) => (
                             <Tooltip key={member.id}>
                               <TooltipTrigger asChild>
                                 <Link href={`/people/${member.id}`}>
@@ -174,7 +231,7 @@ export default function TeamsPage() {
                               </TooltipTrigger>
                               <TooltipContent>
                                 <p>{member.name}</p>
-                                <p className="text-xs text-muted">{member.role.replace("-", " ")}</p>
+                                <p className="text-xs text-muted">{(member.role as string).replace("-", " ")}</p>
                               </TooltipContent>
                             </Tooltip>
                           ))}
@@ -197,6 +254,64 @@ export default function TeamsPage() {
           ))}
         </motion.div>
       </motion.div>
+
+      {/* Create Team Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Users className="h-5 w-5 text-primary" />
+              Create New Team
+            </DialogTitle>
+            <DialogDescription>
+              Add a new team to your organization.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {error && (
+              <div className="rounded-lg bg-danger/10 border border-danger/30 p-3 text-sm text-danger">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label className="text-foreground">Team Name *</Label>
+              <Input
+                placeholder="e.g. Frontend Team"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-foreground">Team Lead</Label>
+              <Select value={form.leadId} onValueChange={(v) => setForm({ ...form, leadId: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select team lead" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allMembers.map((member: any) => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setCreateOpen(false); setError(""); }}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateTeam} loading={saving}>
+              <Save className="mr-2 h-4 w-4" />
+              Create Team
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   );
 }
