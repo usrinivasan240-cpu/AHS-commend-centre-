@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Command, Bell, Search, LogOut, Settings, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -52,6 +52,7 @@ const pathLabels: Record<string, string> = {
 
 export default function Header() {
   const pathname = usePathname();
+  const router = useRouter();
   const segments = pathname.split("/").filter(Boolean);
 
   const userName = "Admin User";
@@ -108,7 +109,10 @@ export default function Header() {
         </button>
 
         {/* Notifications */}
-        <button className="relative flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/10 hover:text-foreground">
+        <button
+          onClick={() => router.push("/notifications")}
+          className="relative flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/10 hover:text-foreground cursor-pointer"
+        >
           <Bell className="h-5 w-5" />
           {notificationCount > 0 && (
             <span className="absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
@@ -120,7 +124,7 @@ export default function Header() {
         {/* User Dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-2 rounded-lg p-1.5 transition-colors hover:bg-muted/10">
+            <button className="flex items-center gap-2 rounded-lg p-1.5 transition-colors hover:bg-muted/10 cursor-pointer">
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
                   {getInitials(userName)}
@@ -146,16 +150,19 @@ export default function Header() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
               <User className="h-4 w-4" />
               Profile
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
               <Settings className="h-4 w-4" />
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-danger focus:text-danger">
+            <DropdownMenuItem
+              onClick={() => router.push("/")}
+              className="text-danger focus:text-danger cursor-pointer"
+            >
               <LogOut className="h-4 w-4" />
               Logout
             </DropdownMenuItem>
