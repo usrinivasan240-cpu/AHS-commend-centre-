@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -11,12 +11,26 @@ import {
   ArrowRight,
   Timer,
   Award,
+  Trash2,
+  Pencil,
+  Mic,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
+import { useAuth } from "@/lib/auth-context";
 import { cn, formatDate } from "@/lib/utils";
 
 const fadeInUp = {
@@ -36,11 +50,15 @@ const typeBadge: Record<string, "default" | "info" | "success" | "warning"> = {
   coding: "info",
   essay: "success",
   viva: "warning",
+  voice: "warning",
 };
 
 export default function PublishedAssessmentsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super-admin";
   const { data: assessments, loading } = useFirestoreQuery(COLLECTIONS.ASSESSMENTS);
   const { data: results } = useFirestoreQuery(COLLECTIONS.ASSESSMENT_RESULTS);
+  const { update, remove } = useFirestoreActions(COLLECTIONS.ASSESSMENTS);
 
   const published = useMemo(
     () => assessments.filter((a: any) => a.status === "upcoming" || a.status === "published"),
@@ -51,6 +69,51 @@ export default function PublishedAssessmentsPage() {
     () => new Set(results.map((r: any) => r.assessmentId)),
     [results]
   );
+
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ title: "", description: "", duration: 60, passingMarks: 50 });
+  const [saving, setSaving] = useState(false);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await remove(deleteTarget.id);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
+  };
+
+  const openEdit = (a: any) => {
+    setEditTarget(a);
+    setEditForm({
+      title: a.title || "",
+      description: a.description || "",
+      duration: a.duration || 60,
+      passingMarks: a.passingMarks || 50,
+    });
+  };
+
+  const handleEdit = async () => {
+    if (!editTarget) return;
+    setSaving(true);
+    try {
+      await update(editTarget.id, {
+        title: editForm.title,
+        description: editForm.description,
+        duration: editForm.duration,
+        passingMarks: editForm.passingMarks,
+      });
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+    setSaving(false);
+    setEditTarget(null);
+  };
 
   if (loading) {
     return (
@@ -112,15 +175,36 @@ export default function PublishedAssessmentsPage() {
               )}>
                 <CardContent className="p-5">
                   <div className="flex items-start justify-between">
-                    <Badge variant={typeBadge[assessment.type]} className="text-[10px]">
+                    <Badge variant={typeBadge[assessment.type] || "default"} className="text-[10px]">
+                      {assessment.type === "voice" && <Mic className="mr-1 h-3 w-3" />}
                       {assessment.type?.toUpperCase()}
                     </Badge>
-                    {isCompleted && (
-                      <Badge variant="success" className="text-[10px]">
-                        <Award className="mr-1 h-3 w-3" />
-                        Completed
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {isCompleted && (
+                        <Badge variant="success" className="text-[10px]">
+                          <Award className="mr-1 h-3 w-3" />
+                          Completed
+                        </Badge>
+                      )}
+                      {isAdmin && (
+                        <div className="flex items-center gap-1 ml-1">
+                          <button
+                            onClick={() => openEdit(assessment)}
+                            className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#0066ff] transition-colors"
+                            title="Edit"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(assessment)}
+                            className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#ef4444] transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <h3 className="mt-3 text-lg font-semibold text-white group-hover:text-[#0066ff] transition-colors">
                     {assessment.title}
@@ -165,6 +249,82 @@ export default function PublishedAssessmentsPage() {
           <p>No published assessments available yet.</p>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Assessment</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.title}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-white">Edit Assessment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-[#94a3b8]">Title</Label>
+              <Input
+                value={editForm.title}
+                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                className="border-[#1e293b] bg-[#0a0f1e] text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[#94a3b8]">Description</Label>
+              <Textarea
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                className="border-[#1e293b] bg-[#0a0f1e] text-white"
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[#94a3b8]">Duration (min)</Label>
+                <Input
+                  type="number"
+                  value={editForm.duration}
+                  onChange={(e) => setEditForm({ ...editForm, duration: parseInt(e.target.value) || 60 })}
+                  className="border-[#1e293b] bg-[#0a0f1e] text-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[#94a3b8]">Passing Marks</Label>
+                <Input
+                  type="number"
+                  value={editForm.passingMarks}
+                  onChange={(e) => setEditForm({ ...editForm, passingMarks: parseInt(e.target.value) || 0 })}
+                  className="border-[#1e293b] bg-[#0a0f1e] text-white"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={handleEdit} disabled={saving}>
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

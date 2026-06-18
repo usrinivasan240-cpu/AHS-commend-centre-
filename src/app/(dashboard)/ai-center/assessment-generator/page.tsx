@@ -19,6 +19,7 @@ import {
   Clock,
   Hash,
   BarChart3,
+  Mic,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,13 +57,14 @@ const staggerContainer = {
 
 interface GeneratedQuestion {
   id: number;
-  type: "mcq" | "coding" | "essay";
+  type: "mcq" | "coding" | "essay" | "voice";
   question: string;
   options?: string[];
   correctAnswer?: string;
   sampleAnswer?: string;
   difficulty: "easy" | "medium" | "hard";
   marks: number;
+  timeLimit?: number;
 }
 
 function generateQuestions(config: {
@@ -158,9 +160,34 @@ function generateQuestions(config: {
     ],
   };
 
+  const voiceTemplates: Record<string, { q: string; timeLimit: number; answer: string }[]> = {
+    react: [
+      { q: "Explain what React hooks are and list the most commonly used ones.", timeLimit: 120, answer: "React hooks are functions that let you use state and lifecycle features in functional components. Common hooks include useState, useEffect, useContext, useRef, useMemo, and useCallback." },
+      { q: "Describe the difference between state and props in React.", timeLimit: 90, answer: "State is mutable data managed within a component, while props are read-only data passed from parent to child components. State can be updated with setState/useState, props cannot be modified by the receiving component." },
+      { q: "What is the virtual DOM and how does React use it?", timeLimit: 120, answer: "The virtual DOM is a lightweight in-memory representation of the real DOM. React uses it to batch updates and minimize direct DOM manipulation, improving performance through a reconciliation process." },
+      { q: "Explain how you would handle error boundaries in a React application.", timeLimit: 120, answer: "Error boundaries are React components that catch JavaScript errors in their child component tree. They use getDerivedStateFromError and componentDidCatch lifecycle methods to display fallback UI instead of crashing the entire app." },
+    ],
+    javascript: [
+      { q: "Explain the concept of closures in JavaScript with a practical example.", timeLimit: 120, answer: "A closure is a function that retains access to its outer scope variables even after the outer function has returned. For example, a counter function returning an inner function that accesses the count variable." },
+      { q: "What is the event loop and how does asynchronous JavaScript work?", timeLimit: 120, answer: "The event loop continuously monitors the call stack and task queue. When the stack is empty, it processes callbacks from the queue. Microtasks (Promises) have priority over macrotasks (setTimeout, setInterval)." },
+      { q: "Describe the difference between var, let, and const.", timeLimit: 90, answer: "var is function-scoped and hoisted, let is block-scoped and not hoisted, const is block-scoped, not hoisted, and cannot be reassigned after declaration." },
+    ],
+    python: [
+      { q: "Explain list comprehensions and when you would use them.", timeLimit: 90, answer: "List comprehensions provide a concise way to create lists. They are more readable and often faster than traditional for loops for simple list creation operations." },
+      { q: "What are decorators in Python and how do they work?", timeLimit: 120, answer: "Decorators are functions that modify the behavior of other functions or classes. They use the @decorator syntax and are applied at function definition time. They are commonly used for logging, authentication, and caching." },
+      { q: "Explain the difference between deep copy and shallow copy.", timeLimit: 90, answer: "A shallow copy creates a new object but references the same nested objects. A deep copy creates a completely independent copy of the object and all nested objects." },
+    ],
+    general: [
+      { q: "Tell me about your experience with version control systems like Git.", timeLimit: 120, answer: "Expected: Familiarity with git add, commit, push, pull, merge, branches, resolving conflicts, and pull requests." },
+      { q: "How do you approach debugging a complex issue in your code?", timeLimit: 120, answer: "Expected: Systematic approach - reproduce the issue, check logs, use debugging tools, isolate the problem, test hypotheses, and verify the fix." },
+      { q: "Describe a challenging project you worked on and how you solved the problems.", timeLimit: 180, answer: "Expected: Clear explanation of the challenge, the approach taken, technologies used, and the outcome." },
+      { q: "How do you ensure code quality in your projects?", timeLimit: 120, answer: "Expected: Code reviews, testing (unit, integration, e2e), linting, formatting, documentation, and following design patterns." },
+    ],
+  };
+
   const getTemplates = (subject: string, type: string) => {
     const sub = subject.toLowerCase();
-    const templates: Record<string, Record<string, any[]>> = { mcq: mcqTemplates, coding: codingTemplates, essay: essayTemplates };
+    const templates: Record<string, Record<string, any[]>> = { mcq: mcqTemplates, coding: codingTemplates, essay: essayTemplates, voice: voiceTemplates };
     const bank = templates[type] || mcqTemplates;
     for (const key of Object.keys(bank)) {
       if (sub.includes(key) || key.includes(sub)) return bank[key];
@@ -176,7 +203,7 @@ function generateQuestions(config: {
     const template = templates[i % templates.length];
     const q: GeneratedQuestion = {
       id: i + 1,
-      type: type as "mcq" | "coding" | "essay",
+      type: type as "mcq" | "coding" | "essay" | "voice",
       question: template.q,
       difficulty: difficulty as "easy" | "medium" | "hard",
       marks,
@@ -187,6 +214,10 @@ function generateQuestions(config: {
     }
     if ((type === "coding" || type === "essay") && template.answer) {
       q.sampleAnswer = template.answer;
+    }
+    if (type === "voice") {
+      q.sampleAnswer = template.answer;
+      q.timeLimit = template.timeLimit || 120;
     }
     questions.push(q);
   }
@@ -300,6 +331,7 @@ export default function AssessmentGeneratorPage() {
     mcq: BookOpen,
     coding: Code,
     essay: PenTool,
+    voice: Mic,
   };
 
   const difficultyColors = {
@@ -407,6 +439,12 @@ export default function AssessmentGeneratorPage() {
                             Essay / Descriptive
                           </div>
                         </SelectItem>
+                        <SelectItem value="voice">
+                          <div className="flex items-center gap-2">
+                            <Mic className="h-4 w-4" />
+                            Voice / Communication
+                          </div>
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -482,7 +520,7 @@ export default function AssessmentGeneratorPage() {
                   <div>
                     <p className="text-sm text-muted">Estimated Assessment</p>
                     <p className="text-lg font-semibold text-white">
-                      {form.numberOfQuestions} {form.questionType === "mcq" ? "MCQ" : form.questionType === "coding" ? "Coding" : "Essay"} Questions
+                      {form.numberOfQuestions} {form.questionType === "mcq" ? "MCQ" : form.questionType === "coding" ? "Coding" : form.questionType === "voice" ? "Voice" : "Essay"} Questions
                     </p>
                   </div>
                   <Button

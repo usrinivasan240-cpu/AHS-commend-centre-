@@ -328,11 +328,17 @@ export default function TakeAssessmentPage() {
               </div>
             )}
 
-            {(currentQ.type === "coding" || currentQ.type === "essay") && (
+            {(currentQ.type === "coding" || currentQ.type === "essay" || currentQ.type === "voice") && (
               <textarea
                 className="w-full rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4 text-sm text-white placeholder-[#64748b] focus:border-[#0066ff] focus:outline-none"
-                rows={8}
-                placeholder={currentQ.type === "coding" ? "Write your code here..." : "Write your answer here..."}
+                rows={currentQ.type === "voice" ? 6 : 8}
+                placeholder={
+                  currentQ.type === "coding"
+                    ? "Write your code here..."
+                    : currentQ.type === "voice"
+                    ? "Type your spoken response here (or speak using the mic)..."
+                    : "Write your answer here..."
+                }
                 value={answers[currentQ.id] || ""}
                 onChange={(e) => handleAnswer(currentQ.id, e.target.value)}
               />
