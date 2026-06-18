@@ -65,113 +65,133 @@ interface GeneratedQuestion {
   marks: number;
 }
 
-const mockQuestions: GeneratedQuestion[] = [
-  {
-    id: 1,
-    type: "mcq",
-    question: "What is the primary purpose of React's useEffect hook?",
-    options: [
-      "To handle side effects in functional components",
-      "To manage component state",
-      "To optimize rendering performance",
-      "To handle user input events",
-    ],
-    correctAnswer: "To handle side effects in functional components",
-    difficulty: "easy",
-    marks: 5,
-  },
-  {
-    id: 2,
-    type: "mcq",
-    question: "Which of the following is NOT a valid React lifecycle method?",
-    options: [
-      "componentDidMount",
-      "componentWillUnmount",
-      "componentDidNavigate",
-      "componentDidUpdate",
-    ],
-    correctAnswer: "componentDidNavigate",
-    difficulty: "medium",
-    marks: 5,
-  },
-  {
-    id: 3,
-    type: "mcq",
-    question: "What does the 'key' prop help React with in a list?",
-    options: [
-      "Styling list items",
-      "Identifying which items have changed, added, or removed",
-      "Sorting the list alphabetically",
-      "Filtering list items",
-    ],
-    correctAnswer: "Identifying which items have changed, added, or removed",
-    difficulty: "easy",
-    marks: 5,
-  },
-  {
-    id: 4,
-    type: "coding",
-    question: "Write a React custom hook called useLocalStorage that syncs state with localStorage.",
-    sampleAnswer: `function useLocalStorage(key, initialValue) {
-  const [storedValue, setStoredValue] = useState(() => {
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      return initialValue;
-    }
-  });
+function generateQuestions(config: {
+  subject: string;
+  topic: string;
+  type: string;
+  count: number;
+  difficulty: string;
+}): GeneratedQuestion[] {
+  const { subject, topic, type, count, difficulty } = config;
+  const questions: GeneratedQuestion[] = [];
 
-  const setValue = (value) => {
-    setStoredValue(value);
-    window.localStorage.setItem(key, JSON.stringify(value));
+  const mcqTemplates: Record<string, { q: string; opts: string[]; ans: string }[]> = {
+    react: [
+      { q: "What does useState return?", opts: ["A state variable and setter", "Just the state", "An object with data", "A promise"], ans: "A state variable and setter" },
+      { q: "What is the purpose of useEffect?", opts: ["Handle side effects", "Manage state", "Render JSX", "Style components"], ans: "Handle side effects" },
+      { q: "Which hook is used for context?", opts: ["useContext", "useRef", "useMemo", "useCallback"], ans: "useContext" },
+      { q: "What is JSX?", opts: ["JavaScript XML", "Java Syntax Extension", "JSON XML", "JS Xpress"], ans: "JavaScript XML" },
+      { q: "How do you pass props?", opts: ["Via function parameters", "Via attributes in JSX", "Via state", "Via context only"], ans: "Via attributes in JSX" },
+      { q: "What is a controlled component?", opts: ["Component with state managing input", "Component without state", "Component with Redux", "Component with props only"], ans: "Component with state managing input" },
+      { q: "What does useRef return?", opts: ["A mutable ref object", "A DOM element directly", "A state variable", "A promise"], ans: "A mutable ref object" },
+      { q: "Which is NOT a React hook?", opts: ["useComponent", "useState", "useEffect", "useReducer"], ans: "useComponent" },
+      { q: "What is prop drilling?", opts: ["Passing props through multiple levels", "Breaking props", "Creating props", "Deleting props"], ans: "Passing props through multiple levels" },
+      { q: "What is the virtual DOM?", opts: ["A lightweight copy of the real DOM", "A database", "A browser API", "A testing framework"], ans: "A lightweight copy of the real DOM" },
+    ],
+    javascript: [
+      { q: "What does '===' check?", opts: ["Value and type", "Value only", "Reference only", "Type only"], ans: "Value and type" },
+      { q: "What is a closure?", opts: ["Function with access to outer scope", "Closed loop", "End of execution", "Empty function"], ans: "Function with access to outer scope" },
+      { q: "What is the event loop?", opts: ["Mechanism for handling async operations", "A loop for events", "CSS animation", "A for loop"], ans: "Mechanism for handling async operations" },
+      { q: "What does Array.map return?", opts: ["New array", "Same array", "Object", "Boolean"], ans: "New array" },
+      { q: "What is 'this' in arrow functions?", opts: ["Enclosing scope's this", "Window object", "Class instance", "undefined"], ans: "Enclosing scope's this" },
+      { q: "What does Promise.all do?", opts: ["Resolves when all promises resolve", "Resolves on first", "Rejects all", "Cancels all"], ans: "Resolves when all promises resolve" },
+      { q: "What is destructuring?", opts: ["Extracting values from objects/arrays", "Destroying data", "Creating objects", "Merging arrays"], ans: "Extracting values from objects/arrays" },
+      { q: "What does 'typeof null' return?", opts: ["'object'", "'null'", "'undefined'", "'boolean'"], ans: "'object'" },
+      { q: "What is the spread operator?", opts: ["... expands iterables", "* multiplies", "+ adds", ": defines"], ans: "... expands iterables" },
+      { q: "What is async/await?", opts: ["Promise syntax sugar", "Loop construct", "Error type", "Variable declaration"], ans: "Promise syntax sugar" },
+    ],
+    python: [
+      { q: "What is PEP 8?", opts: ["Python style guide", "A Python version", "A library", "An IDE"], ans: "Python style guide" },
+      { q: "What does 'def' do?", opts: ["Defines a function", "Defines a class", "Defines a variable", "Deletes a variable"], ans: "Defines a function" },
+      { q: "What is a list comprehension?", opts: ["Compact list creation", "A type of loop", "A class method", "A module import"], ans: "Compact list creation" },
+      { q: "What is 'self' in Python?", opts: ["Instance reference", "Class name", "Global variable", "Return value"], ans: "Instance reference" },
+      { q: "What does 'import' do?", opts: ["Loads a module", "Creates a variable", "Defines a function", "Prints output"], ans: "Loads a module" },
+      { q: "What is a decorator?", opts: ["Function that modifies another function", "A comment", "A variable type", "A loop"], ans: "Function that modifies another function" },
+      { q: "What is 'None' in Python?", opts: ["Null value", "Zero", "Empty string", "False"], ans: "Null value" },
+      { q: "What does len() return?", opts: ["Length of object", "Last element", "Type of object", "Sum of elements"], ans: "Length of object" },
+      { q: "What is a dictionary?", opts: ["Key-value pairs", "Ordered list", "Tuple", "Set"], ans: "Key-value pairs" },
+      { q: "What is 'try/except'?", opts: ["Error handling", "Loop control", "Import syntax", "Function definition"], ans: "Error handling" },
+    ],
+    nodejs: [
+      { q: "What is Node.js?", opts: ["JavaScript runtime", "A framework", "A database", "A browser"], ans: "JavaScript runtime" },
+      { q: "What does 'require' do?", opts: ["Imports a module", "Exports a module", "Creates a server", "Reads files"], ans: "Imports a module" },
+      { q: "What is Express.js?", opts: ["Web framework for Node", "A database", "A testing tool", "A CSS framework"], ans: "Web framework for Node" },
+      { q: "What is middleware?", opts: ["Functions that process requests", "Database queries", "Frontend code", "Type definitions"], ans: "Functions that process requests" },
+      { q: "What is npm?", opts: ["Node package manager", "Node programming model", "New project maker", "Network protocol manager"], ans: "Node package manager" },
+      { q: "What does 'res.json()' do?", opts: ["Sends JSON response", "Parses HTML", "Reads files", "Creates database"], ans: "Sends JSON response" },
+      { q: "What is event-driven in Node?", opts: ["Non-blocking I/O pattern", "Synchronous code", "CSS animations", "Database queries"], ans: "Non-blocking I/O pattern" },
+      { q: "What is a callback?", opts: ["Function passed to another function", "Return value", "Variable", "Class method"], ans: "Function passed to another function" },
+      { q: "What is the 'fs' module?", opts: ["File system module", "Font system", "Format system", "Flow system"], ans: "File system module" },
+      { q: "What does 'module.exports' do?", opts: ["Exports module members", "Imports modules", "Creates files", "Runs tests"], ans: "Exports module members" },
+    ],
   };
 
-  return [storedValue, setValue];
-}`,
-    difficulty: "hard",
-    marks: 15,
-  },
-  {
-    id: 5,
-    type: "essay",
-    question: "Explain the concept of Virtual DOM in React. How does it improve performance compared to direct DOM manipulation?",
-    sampleAnswer: "The Virtual DOM is a lightweight copy of the actual DOM. React uses it to batch updates and minimize expensive DOM operations. When state changes, React creates a new Virtual DOM tree, diffs it against the previous one, and only applies the minimal set of real DOM updates needed.",
-    difficulty: "medium",
-    marks: 10,
-  },
-  {
-    id: 6,
-    type: "mcq",
-    question: "Which hook should be used to memoize expensive calculations in React?",
-    options: ["useState", "useEffect", "useMemo", "useCallback"],
-    correctAnswer: "useMemo",
-    difficulty: "medium",
-    marks: 5,
-  },
-  {
-    id: 7,
-    type: "coding",
-    question: "Write a function to flatten a nested array in JavaScript without using flat().",
-    sampleAnswer: `function flatten(arr) {
-  return arr.reduce((acc, val) => {
-    return Array.isArray(val)
-      ? acc.concat(flatten(val))
-      : acc.concat(val);
-  }, []);
-}`,
-    difficulty: "hard",
-    marks: 15,
-  },
-  {
-    id: 8,
-    type: "essay",
-    question: "Describe the difference between controlled and uncontrolled components in React. When would you use each?",
-    sampleAnswer: "Controlled components have their value managed by React state, while uncontrolled components manage their own state via the DOM. Use controlled components when you need validation or immediate UI feedback. Use uncontrolled when integrating with non-React code or for simple forms.",
-    difficulty: "medium",
-    marks: 10,
-  },
-];
+  const codingTemplates: Record<string, { q: string; answer: string }[]> = {
+    react: [
+      { q: "Write a custom hook useLocalStorage that syncs state with localStorage.", answer: "function useLocalStorage(key, init) { const [val, setVal] = useState(() => { const item = localStorage.getItem(key); return item ? JSON.parse(item) : init; }); const set = (v) => { setVal(v); localStorage.setItem(key, JSON.stringify(v)); }; return [val, set]; }" },
+      { q: "Write a Debounce component using useEffect and setTimeout.", answer: "function useDebounce(value, delay) { const [debounced, setDebounced] = useState(value); useEffect(() => { const timer = setTimeout(() => setDebounced(value), delay); return () => clearTimeout(timer); }, [value, delay]); return debounced; }" },
+      { q: "Write a React component that fetches and displays a list of users.", answer: "function UserList() { const [users, setUsers] = useState([]); useEffect(() => { fetch('/api/users').then(r => r.json()).then(setUsers); }, []); return <ul>{users.map(u => <li key={u.id}>{u.name}</li>)}</ul>; }" },
+    ],
+    javascript: [
+      { q: "Write a function to flatten a nested array without using flat().", answer: "function flatten(arr) { return arr.reduce((acc, val) => Array.isArray(val) ? acc.concat(flatten(val)) : acc.concat(val), []); }" },
+      { q: "Implement a debounce function.", answer: "function debounce(fn, delay) { let timer; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); }; }" },
+      { q: "Write a deep clone function for objects.", answer: "function deepClone(obj) { if (obj === null || typeof obj !== 'object') return obj; const clone = Array.isArray(obj) ? [] : {}; for (const key in obj) { clone[key] = deepClone(obj[key]); } return clone; }" },
+    ],
+    python: [
+      { q: "Write a function to check if a string is a palindrome.", answer: "def is_palindrome(s): return s == s[::-1]" },
+      { q: "Write a binary search implementation.", answer: "def binary_search(arr, target): low, high = 0, len(arr)-1\n    while low <= high:\n        mid = (low+high)//2\n        if arr[mid] == target: return mid\n        elif arr[mid] < target: low = mid+1\n        else: high = mid-1\n    return -1" },
+      { q: "Write a class with inheritance in Python.", answer: "class Animal:\n    def __init__(self, name): self.name = name\n    def speak(self): pass\nclass Dog(Animal):\n    def speak(self): return 'Woof'" },
+    ],
+  };
+
+  const essayTemplates: Record<string, { q: string; answer: string }[]> = {
+    react: [
+      { q: "Explain the React component lifecycle and how hooks map to it.", answer: "The React lifecycle has mounting, updating, and unmounting phases. useEffect with empty deps maps to componentDidMount, cleanup to componentWillUnmount, and deps array to componentDidUpdate." },
+      { q: "Compare and contrast controlled vs uncontrolled components.", answer: "Controlled components have their value managed by React state via value/onChange props. Uncontrolled components use refs to access DOM values directly. Controlled gives more control; uncontrolled is simpler for basic forms." },
+    ],
+    javascript: [
+      { q: "Explain closures and their practical applications in JavaScript.", answer: "A closure is a function that retains access to its outer scope variables even after the outer function has returned. Practical uses include data privacy, partial application, memoization, and module patterns." },
+      { q: "Describe the JavaScript event loop and how async operations work.", answer: "The event loop continuously checks the call stack and task queue. When the stack is empty, it picks the next task from the queue. Microtasks (Promises) have priority over macrotasks (setTimeout). Async/await syntactically wraps promise chains." },
+    ],
+    python: [
+      { q: "Explain the GIL in Python and its impact on multi-threading.", answer: "The Global Interpreter Lock (GIL) prevents multiple threads from executing Python bytecode simultaneously. This means CPU-bound tasks don't benefit from threading. Use multiprocessing for CPU-bound work and threading for I/O-bound work." },
+    ],
+  };
+
+  const getTemplates = (subject: string, type: string) => {
+    const sub = subject.toLowerCase();
+    const templates: Record<string, Record<string, any[]>> = { mcq: mcqTemplates, coding: codingTemplates, essay: essayTemplates };
+    const bank = templates[type] || mcqTemplates;
+    for (const key of Object.keys(bank)) {
+      if (sub.includes(key) || key.includes(sub)) return bank[key];
+    }
+    return bank[Object.keys(bank)[0]] || [];
+  };
+
+  const templates = getTemplates(subject + " " + topic, type);
+  const marksByDifficulty: Record<string, number> = { easy: 5, medium: 10, hard: 20 };
+  const marks = marksByDifficulty[difficulty] || 10;
+
+  for (let i = 0; i < count; i++) {
+    const template = templates[i % templates.length];
+    const q: GeneratedQuestion = {
+      id: i + 1,
+      type: type as "mcq" | "coding" | "essay",
+      question: template.q,
+      difficulty: difficulty as "easy" | "medium" | "hard",
+      marks,
+    };
+    if (type === "mcq" && template.opts) {
+      q.options = template.opts;
+      q.correctAnswer = template.ans;
+    }
+    if ((type === "coding" || type === "essay") && template.answer) {
+      q.sampleAnswer = template.answer;
+    }
+    questions.push(q);
+  }
+  return questions;
+}
 
 export default function AssessmentGeneratorPage() {
   const { add } = useFirestoreActions(COLLECTIONS.ASSESSMENTS);
@@ -181,6 +201,8 @@ export default function AssessmentGeneratorPage() {
     questionType: "mcq",
     numberOfQuestions: 10,
     difficulty: "medium",
+    duration: 60,
+    passingMarks: 50,
   });
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<GeneratedQuestion[]>([]);
@@ -191,18 +213,26 @@ export default function AssessmentGeneratorPage() {
   const handleGenerate = async () => {
     setIsGenerating(true);
     setTimeout(async () => {
-      const questions = mockQuestions.slice(0, form.numberOfQuestions);
+      const questions = generateQuestions({
+        subject: form.subject,
+        topic: form.topic,
+        type: form.questionType,
+        count: form.numberOfQuestions,
+        difficulty: form.difficulty,
+      });
       setGeneratedQuestions(questions);
       setIsGenerating(false);
       setActiveTab("preview");
-
       try {
         await add({
           title: `${form.subject} - ${form.topic}`,
+          description: `${form.difficulty} level ${form.questionType.toUpperCase()} assessment on ${form.subject}${form.topic ? ": " + form.topic : ""}`,
           type: form.questionType,
           difficulty: form.difficulty,
           questionCount: form.numberOfQuestions,
           questions,
+          duration: form.duration,
+          passingMarks: form.passingMarks,
           totalMarks: questions.reduce((sum, q) => sum + q.marks, 0),
           status: "completed",
         });
@@ -210,6 +240,35 @@ export default function AssessmentGeneratorPage() {
         console.error("Failed to save assessment:", err);
       }
     }, 2000);
+  };
+
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [lastSavedId, setLastSavedId] = useState<string | null>(null);
+
+  const handlePublish = async (questionsOverride?: GeneratedQuestion[]) => {
+    const qs = questionsOverride || generatedQuestions;
+    if (qs.length === 0) return;
+    setIsPublishing(true);
+    try {
+      const result = await add({
+        title: `${form.subject} - ${form.topic}`,
+        description: `${form.difficulty} level ${form.questionType.toUpperCase()} assessment on ${form.subject}${form.topic ? ": " + form.topic : ""}`,
+        type: form.questionType,
+        difficulty: form.difficulty,
+        questionCount: qs.length,
+        questions: qs,
+        duration: form.duration,
+        passingMarks: form.passingMarks,
+        totalMarks: qs.reduce((sum, q) => sum + q.marks, 0),
+        status: "published",
+        scheduledDate: new Date().toISOString(),
+      });
+      setLastSavedId(result as string);
+    } catch (err) {
+      console.error("Failed to publish assessment:", err);
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const toggleAnswer = (id: number) => {
@@ -392,6 +451,29 @@ export default function AssessmentGeneratorPage() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Duration */}
+                  <div className="space-y-2">
+                    <Label>Duration (minutes)</Label>
+                    <Input
+                      type="number"
+                      min="5"
+                      max="300"
+                      value={form.duration}
+                      onChange={(e) => setForm({ ...form, duration: parseInt(e.target.value) || 60 })}
+                    />
+                  </div>
+
+                  {/* Passing Marks */}
+                  <div className="space-y-2">
+                    <Label>Passing Marks</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={form.passingMarks}
+                      onChange={(e) => setForm({ ...form, passingMarks: parseInt(e.target.value) || 0 })}
+                    />
+                  </div>
                 </div>
 
                 <Separator />
@@ -459,6 +541,19 @@ export default function AssessmentGeneratorPage() {
                       <Button variant="outline" size="sm" onClick={() => alert('Exporting assessment...')}>
                         <Download className="mr-2 h-4 w-4" />
                         Export
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="bg-[#10b981] hover:bg-[#059669] text-white"
+                        onClick={() => handlePublish()}
+                        disabled={isPublishing}
+                      >
+                        {isPublishing ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                        )}
+                        {lastSavedId ? "Published!" : "Publish"}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setActiveTab("form")}>
                         <RotateCcw className="mr-2 h-4 w-4" />

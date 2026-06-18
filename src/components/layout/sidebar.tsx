@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -28,103 +28,114 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAuth } from "@/lib/auth-context";
+import {
+  filterNavigationByRole,
+  type NavItem,
+} from "@/lib/permissions";
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ElementType;
-  children?: { label: string; href: string }[];
-}
-
-const navigation: NavItem[] = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+const allNavigation: NavItem[] = [
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "View Dashboard" },
   {
     label: "People",
     href: "/people",
     icon: Users,
+    permission: "Manage Members",
     children: [
-      { label: "Members", href: "/people" },
-      { label: "Teams", href: "/people/teams" },
-      { label: "Roles & Permissions", href: "/people/roles" },
+      { label: "Members", href: "/people", permission: "Manage Members" },
+      { label: "Teams", href: "/people/teams", permission: "Create Teams" },
+      { label: "Roles & Permissions", href: "/people/roles", permission: "Assign Roles" },
     ],
   },
   {
     label: "Learning",
     href: "/learning",
     icon: BookOpen,
+    permission: "Manage Courses",
     children: [
-      { label: "Courses", href: "/learning/courses" },
-      { label: "Assignments", href: "/learning/assignments" },
+      { label: "Courses", href: "/learning/courses", permission: "Manage Courses" },
+      { label: "Assignments", href: "/learning/assignments", permission: "Manage Courses" },
     ],
   },
   {
     label: "Assessments",
     href: "/assessments",
     icon: ClipboardCheck,
+    permission: "Schedule Assessments",
     children: [
-      { label: "Test Builder", href: "/assessments/builder" },
-      { label: "Results", href: "/assessments/results" },
+      { label: "Published Tests", href: "/assessments/published", permission: "Schedule Assessments" },
+      { label: "Results", href: "/assessments/results", permission: "Schedule Assessments" },
     ],
   },
   {
     label: "Projects",
     href: "/projects",
     icon: FolderKanban,
+    permission: "Manage Projects",
     children: [
-      { label: "All Projects", href: "/projects" },
-      { label: "Kanban Board", href: "/projects/kanban" },
-      { label: "Sprints", href: "/projects/sprints" },
+      { label: "All Projects", href: "/projects", permission: "Manage Projects" },
+      { label: "Kanban Board", href: "/projects/kanban", permission: "Manage Projects" },
+      { label: "Sprints", href: "/projects/sprints", permission: "Manage Projects" },
     ],
   },
   {
     label: "Performance",
     href: "/performance",
     icon: Trophy,
+    permission: "View Reports",
     children: [
-      { label: "Overview", href: "/performance" },
-      { label: "Leaderboard", href: "/performance/leaderboard" },
+      { label: "Overview", href: "/performance", permission: "View Reports" },
+      { label: "Leaderboard", href: "/performance/leaderboard", permission: "View Reports" },
     ],
   },
   {
     label: "CRM",
     href: "/crm",
     icon: Contact2,
+    permission: "Manage Leads",
     children: [
-      { label: "Leads", href: "/crm/leads" },
-      { label: "Clients", href: "/crm/clients" },
-      { label: "Meetings", href: "/crm/meetings" },
+      { label: "Leads", href: "/crm/leads", permission: "Manage Leads" },
+      { label: "Clients", href: "/crm/clients", permission: "Manage Clients" },
+      { label: "Meetings", href: "/crm/meetings", permission: "Manage Clients" },
     ],
   },
-  { label: "Clients Portal", href: "/clients-portal", icon: ExternalLink },
+  { label: "Clients Portal", href: "/clients-portal", icon: ExternalLink, permission: "Manage Clients" },
   {
     label: "Finance",
     href: "/finance",
     icon: DollarSign,
+    permission: "View Finance",
     children: [
-      { label: "Overview", href: "/finance" },
-      { label: "Invoices", href: "/finance/invoices" },
-      { label: "Quotations", href: "/finance/quotations" },
+      { label: "Overview", href: "/finance", permission: "View Finance" },
+      { label: "Invoices", href: "/finance/invoices", permission: "Manage Invoices" },
+      { label: "Quotations", href: "/finance/quotations", permission: "View Finance" },
     ],
   },
   {
     label: "AI Center",
     href: "/ai-center",
     icon: Brain,
+    permission: "View AI Insights",
     children: [
-      { label: "Assistant", href: "/ai-center/assistant" },
-      { label: "Assessment Generator", href: "/ai-center/assessment-generator" },
-      { label: "Estimator", href: "/ai-center/estimator" },
+      { label: "Assistant", href: "/ai-center/assistant", permission: "View AI Insights" },
+      { label: "Assessment Generator", href: "/ai-center/assessment-generator", permission: "View AI Insights" },
     ],
   },
-  { label: "Analytics", href: "/analytics", icon: BarChart3 },
-  { label: "Notifications", href: "/notifications", icon: Bell },
-  { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Analytics", href: "/analytics", icon: BarChart3, permission: "View Reports" },
+  { label: "Notifications", href: "/notifications", icon: Bell, permission: "Manage Notifications" },
+  { label: "Settings", href: "/settings", icon: Settings, permission: "System Settings" },
 ];
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
   const pathname = usePathname();
+  const { user } = useAuth();
+
+  const navigation = useMemo(
+    () => (user?.role ? filterNavigationByRole(allNavigation, user.role) : allNavigation),
+    [user?.role]
+  );
 
   useEffect(() => {
     const activeSections = navigation
@@ -133,7 +144,7 @@ export default function Sidebar() {
     if (activeSections.length > 0) {
       setOpenSections((prev) => [...new Set([...prev, ...activeSections])]);
     }
-  }, [pathname]);
+  }, [pathname, navigation]);
 
   const toggleSection = (label: string) => {
     setOpenSections((prev) =>

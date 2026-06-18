@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -18,6 +18,7 @@ import {
   Building2,
   Calendar,
   Globe,
+  Upload,
 } from "lucide-react";
 import {
   Card,
@@ -91,6 +92,7 @@ export default function LeadsPage() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newLead, setNewLead] = useState({
     name: "",
@@ -189,6 +191,37 @@ export default function LeadsPage() {
     }
   };
 
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split("\n").filter((l) => l.trim());
+    if (lines.length < 2) return;
+
+    const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(",").map((v) => v.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h, idx) => { row[h] = values[idx] || ""; });
+
+      if (row.name || row.company) {
+        await addLeadToFirestore({
+          name: row.name || row.company || "Imported Lead",
+          company: row.company || row.name || "",
+          email: row.email || "",
+          phone: row.phone || "",
+          source: row.source || "website",
+          status: "new",
+          value: Number(row.value) || 0,
+          createdAt: new Date().toISOString().split("T")[0],
+        });
+      }
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   return (
     <motion.div
       initial="initial"
@@ -205,10 +238,23 @@ export default function LeadsPage() {
             {loading ? "Loading..." : `${filteredLeads.length} lead${filteredLeads.length !== 1 ? "s" : ""} in pipeline`}
           </p>
         </div>
-        <Button onClick={() => setDialogOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Add Lead
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleImportExcel}
+          />
+          <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="mr-2 h-4 w-4" />
+            Import Excel
+          </Button>
+          <Button onClick={() => setDialogOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Add Lead
+          </Button>
+        </div>
       </motion.div>
 
       {/* Filters */}

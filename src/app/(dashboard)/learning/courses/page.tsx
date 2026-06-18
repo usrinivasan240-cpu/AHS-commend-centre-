@@ -9,6 +9,9 @@ import {
   X,
   Plus,
   Loader2,
+  Layers,
+  ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,7 +38,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
-
+import { generateCourseContent } from "@/lib/course-content";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -71,6 +74,12 @@ const trackBadgeVariant: Record<string, "default" | "secondary" | "success" | "w
   cloud: "danger",
 };
 
+const difficultyColors: Record<string, string> = {
+  beginner: "text-[#10b981]",
+  intermediate: "text-[#f59e0b]",
+  advanced: "text-[#ef4444]",
+};
+
 export default function CoursesPage() {
   const { data: courses, loading } = useFirestoreQuery(COLLECTIONS.COURSES);
   const { add, loading: addingCourse } = useFirestoreActions(COLLECTIONS.COURSES);
@@ -78,13 +87,13 @@ export default function CoursesPage() {
   const [track, setTrack] = useState("all");
   const [sortBy, setSortBy] = useState("progress");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [newCourse, setNewCourse] = useState({
-    title: "",
+    topic: "",
     description: "",
     track: "frontend",
-    difficulty: "beginner",
-    totalLessons: 10,
   });
+  const [preview, setPreview] = useState<ReturnType<typeof generateCourseContent> | null>(null);
 
   const filtered = useMemo(() => {
     let result = [...courses];
@@ -112,23 +121,45 @@ export default function CoursesPage() {
     });
 
     return result;
-  }, [search, track, sortBy]);
+  }, [search, track, sortBy, courses]);
 
   const hasFilters = search || track !== "all";
 
-  const handleCreateCourse = async () => {
-    if (!newCourse.title.trim()) return;
-    await add({
-      title: newCourse.title,
-      description: newCourse.description,
-      track: newCourse.track,
-      difficulty: newCourse.difficulty,
-      totalLessons: Number(newCourse.totalLessons),
-      completedLessons: 0,
-      progress: 0,
-    });
-    setNewCourse({ title: "", description: "", track: "frontend", difficulty: "beginner", totalLessons: 10 });
-    setDialogOpen(false);
+  const handleGeneratePreview = () => {
+    if (!newCourse.topic.trim()) return;
+    const content = generateCourseContent(newCourse.topic);
+    setPreview(content);
+  };
+
+  const handleCreateCourses = async () => {
+    if (!newCourse.topic.trim()) return;
+    setGenerating(true);
+
+    const content = preview || generateCourseContent(newCourse.topic);
+
+    try {
+      for (const level of content) {
+        await add({
+          title: level.title,
+          description: level.description,
+          track: newCourse.track,
+          difficulty: level.difficulty,
+          totalLessons: level.lessons.length,
+          completedLessons: 0,
+          progress: 0,
+          lessons: level.lessons,
+          topic: newCourse.topic,
+        });
+      }
+
+      setNewCourse({ topic: "", description: "", track: "frontend" });
+      setPreview(null);
+      setDialogOpen(false);
+    } catch (err) {
+      console.error("Failed to create courses:", err);
+    } finally {
+      setGenerating(false);
+    }
   };
 
   if (loading) {
@@ -147,7 +178,7 @@ export default function CoursesPage() {
             <h1 className="text-3xl font-bold tracking-tight text-white">Courses</h1>
             <p className="mt-1 text-[#64748b]">Browse and enroll in courses across all tracks</p>
           </div>
-          <Button onClick={() => setDialogOpen(true)}>
+          <Button onClick={() => { setDialogOpen(true); setPreview(null); }}>
             <Plus className="mr-2 h-4 w-4" />
             Create Course
           </Button>
@@ -244,6 +275,23 @@ export default function CoursesPage() {
                         </div>
                         <Progress value={course.progress} className="mt-1.5" />
                       </div>
+                      {course.lessons && Array.isArray(course.lessons) && course.lessons.length > 0 && (
+                        <div className="mt-3 border-t border-border/50 pt-3">
+                          <p className="text-xs text-[#64748b] mb-2">Lessons:</p>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {course.lessons.slice(0, 5).map((lesson: { title: string; type: string }, idx: number) => (
+                              <div key={idx} className="flex items-center gap-2 text-xs">
+                                <span className="text-[#64748b]">{idx + 1}.</span>
+                                <span className="text-foreground truncate">{lesson.title}</span>
+                                <Badge variant="outline" className="text-[8px] ml-auto shrink-0">{lesson.type}</Badge>
+                              </div>
+                            ))}
+                            {course.lessons.length > 5 && (
+                              <p className="text-[10px] text-[#64748b]">+{course.lessons.length - 5} more lessons</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </motion.div>
@@ -259,79 +307,108 @@ export default function CoursesPage() {
         </Tabs>
       </motion.div>
 
-      {/* Create Course Dialog */}
+      {/* Create Course Dialog - Auto-generates 3 levels */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create Course</DialogTitle>
-            <DialogDescription>Add a new course to the learning platform</DialogDescription>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-[#0066ff]" />
+              Create Course (Auto-generates 3 Levels)
+            </DialogTitle>
+            <DialogDescription>
+              Enter a topic and we will automatically create Basic, Medium, and Advanced courses with pre-built lessons.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Title</Label>
+              <Label>Topic / Course Name *</Label>
               <Input
-                placeholder="e.g., React Advanced Patterns"
-                value={newCourse.title}
-                onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
+                placeholder="e.g., React, Python, Docker, Machine Learning, UI/UX..."
+                value={newCourse.topic}
+                onChange={(e) => {
+                  setNewCourse({ ...newCourse, topic: e.target.value });
+                  setPreview(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newCourse.topic.trim()) {
+                    handleGeneratePreview();
+                  }
+                }}
               />
+              <p className="text-xs text-[#64748b]">
+                Enter any topic - we have content for React, Python, JavaScript, Node.js, TypeScript, Docker, Machine Learning, UI/UX and more!
+              </p>
             </div>
             <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea
-                placeholder="Brief description of the course..."
-                value={newCourse.description}
-                onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
-                rows={3}
-              />
+              <Label>Track</Label>
+              <Select value={newCourse.track} onValueChange={(v) => setNewCourse({ ...newCourse, track: v })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="frontend">Frontend</SelectItem>
+                  <SelectItem value="backend">Backend</SelectItem>
+                  <SelectItem value="ai">AI/ML</SelectItem>
+                  <SelectItem value="ui-ux">UI/UX</SelectItem>
+                  <SelectItem value="cloud">Cloud</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Track</Label>
-                <Select value={newCourse.track} onValueChange={(v) => setNewCourse({ ...newCourse, track: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="frontend">Frontend</SelectItem>
-                    <SelectItem value="backend">Backend</SelectItem>
-                    <SelectItem value="ai">AI/ML</SelectItem>
-                    <SelectItem value="ui-ux">UI/UX</SelectItem>
-                    <SelectItem value="cloud">Cloud</SelectItem>
-                  </SelectContent>
-                </Select>
+
+            {/* Preview Section */}
+            {preview && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-white">
+                  <Layers className="h-4 w-4 text-[#0066ff]" />
+                  Preview — 3 Courses will be created:
+                </div>
+                {preview.map((level, idx) => (
+                  <Card key={idx} className="bg-[#0a0f1e] border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Badge variant={difficultyVariant[level.difficulty]} className="text-[10px]">
+                            {level.difficulty}
+                          </Badge>
+                          <span className="text-sm font-medium text-white">{level.title}</span>
+                        </div>
+                        <span className="text-xs text-[#64748b]">{level.lessons.length} lessons</span>
+                      </div>
+                      <p className="text-xs text-[#64748b] mb-2">{level.description}</p>
+                      <div className="space-y-1">
+                        {level.lessons.slice(0, 5).map((lesson, lIdx) => (
+                          <div key={lIdx} className="flex items-center gap-2 text-xs">
+                            <ChevronRight className="h-3 w-3 text-[#64748b]" />
+                            <span className="text-foreground">{lesson.title}</span>
+                            <span className="text-[#64748b]">({lesson.duration})</span>
+                            <Badge variant="outline" className="text-[8px] ml-auto">{lesson.type}</Badge>
+                          </div>
+                        ))}
+                        {level.lessons.length > 5 && (
+                          <p className="text-[10px] text-[#64748b] pl-5">+{level.lessons.length - 5} more lessons</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
-              <div className="space-y-2">
-                <Label>Difficulty</Label>
-                <Select value={newCourse.difficulty} onValueChange={(v) => setNewCourse({ ...newCourse, difficulty: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="beginner">Beginner</SelectItem>
-                    <SelectItem value="intermediate">Intermediate</SelectItem>
-                    <SelectItem value="advanced">Advanced</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Total Lessons</Label>
-              <Input
-                type="number"
-                value={newCourse.totalLessons}
-                onChange={(e) => setNewCourse({ ...newCourse, totalLessons: Number(e.target.value) })}
-                min={1}
-              />
-            </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setPreview(null); }}>
               Cancel
             </Button>
-            <Button onClick={handleCreateCourse} disabled={!newCourse.title.trim() || addingCourse}>
-              {addingCourse ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-              Create Course
-            </Button>
+            {!preview ? (
+              <Button onClick={handleGeneratePreview} disabled={!newCourse.topic.trim()}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Generate Preview
+              </Button>
+            ) : (
+              <Button onClick={handleCreateCourses} disabled={generating}>
+                {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                {generating ? "Creating 3 Courses..." : "Create All 3 Courses"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

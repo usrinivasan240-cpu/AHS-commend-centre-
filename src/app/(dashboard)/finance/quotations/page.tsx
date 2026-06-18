@@ -29,13 +29,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
@@ -70,13 +64,12 @@ const statusIcon: Record<string, React.ComponentType<{ className?: string }>> = 
 
 export default function QuotationsPage() {
   const { data: quotations, loading } = useFirestoreQuery(COLLECTIONS.QUOTATIONS);
-  const { data: clients } = useFirestoreQuery(COLLECTIONS.CLIENTS);
   const { add: addQuotationToFirestore } = useFirestoreActions(COLLECTIONS.QUOTATIONS);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   const [newQuotation, setNewQuotation] = useState({
-    clientId: "",
+    clientName: "",
     title: "",
     validUntil: "",
     items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as { description: string; quantity: number; rate: number; amount: number }[],
@@ -85,10 +78,6 @@ export default function QuotationsPage() {
   const filteredQuotations = quotations.filter((q: any) => {
     return filterStatus === "all" || q.status === filterStatus;
   });
-
-  const getClientName = (clientId: string) => {
-    return clients.find((c: any) => c.id === clientId)?.name || "Unknown";
-  };
 
   const handleAddItem = () => {
     setNewQuotation({
@@ -121,7 +110,7 @@ export default function QuotationsPage() {
     try {
       const total = newQuotation.items.reduce((sum, item) => sum + item.amount, 0);
       await addQuotationToFirestore({
-        clientId: newQuotation.clientId,
+        clientName: newQuotation.clientName,
         title: newQuotation.title,
         amount: total,
         status: "draft",
@@ -130,7 +119,7 @@ export default function QuotationsPage() {
       });
       setShowCreateDialog(false);
       setNewQuotation({
-        clientId: "",
+        clientName: "",
         title: "",
         validUntil: "",
         items: [{ description: "", quantity: 1, rate: 0, amount: 0 }],
@@ -219,7 +208,7 @@ export default function QuotationsPage() {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-xs text-muted">Client</p>
-                        <p className="font-medium text-white">{getClientName(quotation.clientId)}</p>
+                        <p className="font-medium text-white">{quotation.clientName || "Unknown"}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted">Total Amount</p>
@@ -296,24 +285,14 @@ export default function QuotationsPage() {
               />
             </div>
 
-            {/* Client Select */}
+            {/* Client Name */}
             <div className="space-y-2">
-              <Label>Client</Label>
-              <Select
-                value={newQuotation.clientId}
-                onValueChange={(value) => setNewQuotation({ ...newQuotation, clientId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a client" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map((client: any) => (
-                    <SelectItem key={client.id} value={client.id}>
-                      {client.name} - {client.company}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Client Name</Label>
+              <Input
+                placeholder="Enter client name"
+                value={newQuotation.clientName}
+                onChange={(e) => setNewQuotation({ ...newQuotation, clientName: e.target.value })}
+              />
             </div>
 
             {/* Valid Until */}
@@ -399,7 +378,7 @@ export default function QuotationsPage() {
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateQuotation} disabled={!newQuotation.clientId || !newQuotation.title}>
+            <Button onClick={handleCreateQuotation} disabled={!newQuotation.clientName || !newQuotation.title}>
               Create Quotation
             </Button>
           </DialogFooter>

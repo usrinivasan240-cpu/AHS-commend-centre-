@@ -93,15 +93,7 @@ export default function ResultsPage() {
 
   const loading = loadingAssessments || loadingResults;
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="text-sm text-[#64748b]">Loading results...</div>
-      </div>
-    );
-  }
-
-  const completedAssessments = assessments.filter((a) => a.status === "completed");
+  const completedAssessments = useMemo(() => assessments.filter((a) => a.status === "completed"), [assessments]);
 
   const resultsWithNames = useMemo(() => {
     return results.map((r) => {
@@ -166,6 +158,14 @@ export default function ResultsPage() {
       { name: "Fail", value: failCount },
     ];
   }, [results]);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading results...</div>
+      </div>
+    );
+  }
 
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">

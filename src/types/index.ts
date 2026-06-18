@@ -20,6 +20,8 @@ export interface User {
   performanceScore: number;
   joinDate: string;
   skills: string[];
+  phone?: string;
+  password?: string;
 }
 
 export interface Team {

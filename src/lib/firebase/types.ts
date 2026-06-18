@@ -26,6 +26,8 @@ export type FirestoreUser = {
   performanceScore: number;
   joinDate: string;
   skills: string[];
+  phone?: string;
+  password?: string;
   createdAt?: Date;
 };
 

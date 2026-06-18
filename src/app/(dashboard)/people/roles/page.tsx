@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Shield,
@@ -11,11 +12,16 @@ import {
   UserCheck,
   Briefcase,
   Eye,
+  Loader2,
+  Save,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
+import { COLLECTIONS } from "@/lib/firebase/types";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -28,23 +34,6 @@ const staggerContainer = {
     transition: { staggerChildren: 0.08 },
   },
 };
-
-interface Permission {
-  name: string;
-  description: string;
-}
-
-interface RoleDefinition {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-  color: string;
-  bgColor: string;
-  permissions: Permission[];
-  memberCount: number;
-}
 
 const allPermissions = [
   "View Dashboard",
@@ -65,125 +54,67 @@ const allPermissions = [
   "Manage Notifications",
 ];
 
-const roles: RoleDefinition[] = [
-  {
-    id: "1",
-    name: "Super Admin",
-    slug: "super-admin",
-    description: "Full system access with all administrative privileges. Can manage every aspect of the platform.",
-    icon: Crown,
-    color: "text-danger",
-    bgColor: "bg-danger/10",
-    memberCount: 1,
-    permissions: allPermissions.map((p) => ({ name: p, description: p })),
-  },
-  {
-    id: "2",
-    name: "Core Admin",
-    slug: "core-admin",
-    description: "Administrative access for core operations. Manages teams, projects, and reports.",
-    icon: Shield,
-    color: "text-info",
-    bgColor: "bg-info/10",
-    memberCount: 1,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard" },
-      { name: "Manage Members", description: "Manage Members" },
-      { name: "Create Teams", description: "Create Teams" },
-      { name: "Manage Projects", description: "Manage Projects" },
-      { name: "View Reports", description: "View Reports" },
-      { name: "Manage Clients", description: "Manage Clients" },
-      { name: "Manage Leads", description: "Manage Leads" },
-      { name: "View Finance", description: "View Finance" },
-      { name: "Manage Courses", description: "Manage Courses" },
-      { name: "Schedule Assessments", description: "Schedule Assessments" },
-      { name: "View AI Insights", description: "View AI Insights" },
-      { name: "Manage Notifications", description: "Manage Notifications" },
-    ],
-  },
-  {
-    id: "3",
-    name: "Team Lead",
-    slug: "team-lead",
-    description: "Leads a team, manages tasks, and monitors team performance and attendance.",
-    icon: UserCheck,
-    color: "text-primary",
-    bgColor: "bg-primary/10",
-    memberCount: 2,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard" },
-      { name: "Manage Members", description: "Manage Members (limited)" },
-      { name: "Manage Projects", description: "Manage Projects (team)" },
-      { name: "View Reports", description: "View Reports (team)" },
-      { name: "Manage Courses", description: "Manage Courses" },
-      { name: "Schedule Assessments", description: "Schedule Assessments" },
-      { name: "View AI Insights", description: "View AI Insights" },
-    ],
-  },
-  {
-    id: "4",
-    name: "Developer",
-    slug: "developer",
-    description: "Full development access. Works on projects, completes tasks, and manages assigned work.",
-    icon: Code,
-    color: "text-success",
-    bgColor: "bg-success/10",
-    memberCount: 3,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard" },
-      { name: "View Reports", description: "View Reports (personal)" },
-      { name: "Manage Projects", description: "Manage Projects (assigned)" },
-      { name: "View AI Insights", description: "View AI Insights" },
-    ],
-  },
-  {
-    id: "5",
-    name: "Intern",
-    slug: "intern",
-    description: "Learning-focused role with access to courses, assessments, and assigned tasks.",
-    icon: Briefcase,
-    color: "text-warning",
-    bgColor: "bg-warning/10",
-    memberCount: 2,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard" },
-      { name: "View Reports", description: "View Reports (personal)" },
-      { name: "Manage Courses", description: "View Courses" },
-      { name: "View AI Insights", description: "View AI Insights" },
-    ],
-  },
-  {
-    id: "6",
-    name: "Trainee",
-    slug: "trainee",
-    description: "Entry-level role for new members. Limited access focused on learning and training.",
-    icon: GraduationCap,
-    color: "text-muted-light",
-    bgColor: "bg-muted/10",
-    memberCount: 3,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard" },
-      { name: "View Reports", description: "View Reports (personal)" },
-      { name: "Manage Courses", description: "View Courses" },
-    ],
-  },
-  {
-    id: "7",
-    name: "Client",
-    slug: "client",
-    description: "External client access. Can view assigned projects and submit feedback.",
-    icon: Eye,
-    color: "text-secondary",
-    bgColor: "bg-secondary/10",
-    memberCount: 0,
-    permissions: [
-      { name: "View Dashboard", description: "View Dashboard (limited)" },
-      { name: "View Reports", description: "View Reports (project)" },
-    ],
-  },
+const defaultRoles = [
+  { slug: "super-admin", name: "Super Admin", icon: Crown, color: "text-danger", bgColor: "bg-danger/10", description: "Full system access with all administrative privileges." },
+  { slug: "core-admin", name: "Core Admin", icon: Shield, color: "text-info", bgColor: "bg-info/10", description: "Administrative access for core operations." },
+  { slug: "team-lead", name: "Team Lead", icon: UserCheck, color: "text-primary", bgColor: "bg-primary/10", description: "Leads a team, manages tasks and performance." },
+  { slug: "developer", name: "Developer", icon: Code, color: "text-success", bgColor: "bg-success/10", description: "Full development access for projects." },
+  { slug: "intern", name: "Intern", icon: Briefcase, color: "text-warning", bgColor: "bg-warning/10", description: "Learning-focused with course and assessment access." },
+  { slug: "trainee", name: "Trainee", icon: GraduationCap, color: "text-muted-light", bgColor: "bg-muted/10", description: "Entry-level role focused on learning." },
+  { slug: "client", name: "Client", icon: Eye, color: "text-secondary", bgColor: "bg-secondary/10", description: "External client access for project viewing." },
 ];
 
 export default function RolesPage() {
+  const { data: roleDocs, loading } = useFirestoreQuery(COLLECTIONS.TEAMS);
+  const { add, update } = useFirestoreActions("roles");
+  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>({});
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (loaded) return;
+    const stored = localStorage.getItem("ahs_role_permissions");
+    if (stored) {
+      setRolePermissions(JSON.parse(stored));
+      setLoaded(true);
+    } else {
+      const defaults: Record<string, string[]> = {
+        "super-admin": [...allPermissions],
+        "core-admin": ["View Dashboard", "Manage Members", "Create Teams", "Manage Projects", "View Reports", "Manage Clients", "Manage Leads", "View Finance", "Manage Courses", "Schedule Assessments", "View AI Insights", "Manage Notifications"],
+        "team-lead": ["View Dashboard", "Manage Members", "Manage Projects", "View Reports", "Manage Courses", "Schedule Assessments", "View AI Insights"],
+        "developer": ["View Dashboard", "View Reports", "Manage Projects", "View AI Insights"],
+        "intern": ["View Dashboard", "View Reports", "Manage Courses", "View AI Insights"],
+        "trainee": ["View Dashboard", "View Reports", "Manage Courses"],
+        "client": ["View Dashboard", "View Reports"],
+      };
+      setRolePermissions(defaults);
+      setLoaded(true);
+    }
+  }, [loaded]);
+
+  const togglePermission = (roleSlug: string, permission: string) => {
+    setRolePermissions((prev) => {
+      const current = prev[roleSlug] || [];
+      const updated = current.includes(permission)
+        ? current.filter((p) => p !== permission)
+        : [...current, permission];
+      return { ...prev, [roleSlug]: updated };
+    });
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      localStorage.setItem("ahs_role_permissions", JSON.stringify(rolePermissions));
+      for (const [slug, perms] of Object.entries(rolePermissions)) {
+        await add({ slug, permissions: perms, updatedAt: new Date().toISOString() });
+      }
+    } catch (err) {
+      console.error("Failed to save permissions:", err);
+    }
+    setSaving(false);
+  };
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
       {/* Header */}
@@ -195,14 +126,16 @@ export default function RolesPage() {
       {/* Summary Stats */}
       <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: "Total Roles", value: roles.length, color: "text-primary" },
+          { label: "Total Roles", value: defaultRoles.length, color: "text-primary" },
           { label: "Total Permissions", value: allPermissions.length, color: "text-secondary" },
           {
-            label: "Assigned Members",
-            value: roles.reduce((s, r) => s + r.memberCount, 0),
+            label: "Avg Permissions",
+            value: Math.round(
+              defaultRoles.reduce((sum, r) => sum + (rolePermissions[r.slug]?.length || 0), 0) / defaultRoles.length
+            ),
             color: "text-success",
           },
-          { label: "Admin Roles", value: roles.filter((r) => ["super-admin", "core-admin"].includes(r.slug)).length, color: "text-warning" },
+          { label: "Admin Roles", value: defaultRoles.filter((r) => ["super-admin", "core-admin"].includes(r.slug)).length, color: "text-warning" },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -215,15 +148,14 @@ export default function RolesPage() {
 
       {/* Roles Grid */}
       <motion.div variants={fadeInUp} className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {roles.map((role, i) => {
+        {defaultRoles.map((role, i) => {
           const Icon = role.icon;
-          const totalPerms = allPermissions.length;
-          const grantedPerms = role.permissions.length;
-          const accessLevel = Math.round((grantedPerms / totalPerms) * 100);
+          const perms = rolePermissions[role.slug] || [];
+          const accessLevel = Math.round((perms.length / allPermissions.length) * 100);
 
           return (
             <motion.div
-              key={role.id}
+              key={role.slug}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.08 }}
@@ -237,9 +169,6 @@ export default function RolesPage() {
                       </div>
                       <div>
                         <CardTitle className="text-base">{role.name}</CardTitle>
-                        <p className="text-xs text-muted mt-0.5">
-                          {role.memberCount} member{role.memberCount !== 1 ? "s" : ""}
-                        </p>
                       </div>
                     </div>
                     <Badge variant="outline" className="text-xs">
@@ -249,58 +178,53 @@ export default function RolesPage() {
                   <p className="text-sm text-muted mt-2">{role.description}</p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {/* Access Level Bar */}
                   <div>
                     <div className="mb-1.5 flex items-center justify-between text-xs">
                       <span className="text-muted">Access Level</span>
                       <span className={cn("font-medium", role.color)}>
-                        {grantedPerms}/{totalPerms}
+                        {perms.length}/{allPermissions.length}
                       </span>
                     </div>
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/50">
                       <div
                         className={cn(
                           "h-full rounded-full transition-all",
-                          accessLevel >= 80
-                            ? "bg-danger"
-                            : accessLevel >= 50
-                            ? "bg-primary"
-                            : accessLevel >= 30
-                            ? "bg-warning"
-                            : "bg-muted"
+                          accessLevel >= 80 ? "bg-danger" : accessLevel >= 50 ? "bg-primary" : accessLevel >= 30 ? "bg-warning" : "bg-muted"
                         )}
                         style={{ width: `${accessLevel}%` }}
                       />
                     </div>
                   </div>
-
                   <Separator />
-
-                  {/* Permissions List */}
                   <div>
-                    <p className="mb-2 text-xs font-medium text-muted uppercase tracking-wider">
-                      Permissions
-                    </p>
+                    <p className="mb-2 text-xs font-medium text-muted uppercase tracking-wider">Permissions</p>
                     <div className="grid grid-cols-1 gap-1.5">
                       {allPermissions.map((perm) => {
-                        const hasPermission = role.permissions.some((p) => p.name === perm);
+                        const hasPermission = perms.includes(perm);
                         return (
-                          <div
+                          <button
                             key={perm}
-                            className={cn(
-                              "flex items-center gap-2 rounded-md px-2 py-1 text-sm",
-                              hasPermission
-                                ? "text-foreground"
-                                : "text-muted/50"
-                            )}
+                            type="button"
+                            onClick={() => togglePermission(role.slug, perm)}
+                            className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-card-hover/30 transition-colors w-full text-left"
                           >
-                            {hasPermission ? (
-                              <Check className="h-3.5 w-3.5 shrink-0 text-success" />
-                            ) : (
-                              <X className="h-3.5 w-3.5 shrink-0 text-muted/30" />
-                            )}
-                            <span className={cn(!hasPermission && "line-through")}>{perm}</span>
-                          </div>
+                            <span className={cn(hasPermission ? "text-foreground" : "text-muted/50")}>
+                              {perm}
+                            </span>
+                            <span
+                              className={cn(
+                                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent transition-colors",
+                                hasPermission ? "bg-primary" : "bg-border"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform",
+                                  hasPermission ? "translate-x-4" : "translate-x-0"
+                                )}
+                              />
+                            </span>
+                          </button>
                         );
                       })}
                     </div>
@@ -311,6 +235,14 @@ export default function RolesPage() {
           );
         })}
       </motion.div>
+
+      {/* Save Button */}
+      <div className="flex justify-end sticky bottom-4">
+        <Button onClick={handleSave} disabled={saving} className="shadow-lg">
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+          {saving ? "Saving..." : "Save All Permissions"}
+        </Button>
+      </div>
     </motion.div>
   );
 }

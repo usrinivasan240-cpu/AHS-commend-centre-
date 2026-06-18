@@ -100,55 +100,124 @@ const budgetRanges = [
   { id: "enterprise", label: "₹30L+", min: 3000000, max: 10000000 },
 ];
 
-const mockEstimate: ProjectEstimate = {
-  scope: {
-    summary: "Based on the project description, this appears to be a mid-complexity project requiring both frontend and backend development with third-party integrations.",
-    modules: [
-      "User Authentication & Authorization",
-      "Dashboard & Analytics",
-      "API Integration Layer",
-      "Database Management",
-      "Real-time Notifications",
-      "Admin Panel",
-    ],
-    complexity: "Medium-High",
-  },
-  timeline: {
-    totalWeeks: 16,
-    phases: [
-      { name: "Discovery & Planning", weeks: 2 },
-      { name: "UI/UX Design", weeks: 3 },
-      { name: "Frontend Development", weeks: 5 },
-      { name: "Backend Development", weeks: 5 },
-      { name: "Testing & QA", weeks: 2 },
-      { name: "Deployment & Launch", weeks: 1 },
-    ],
-  },
-  team: {
-    roles: [
-      { role: "Project Manager", count: 1, allocation: "100%" },
-      { role: "UI/UX Designer", count: 1, allocation: "100%" },
-      { role: "Frontend Developer", count: 2, allocation: "100%" },
-      { role: "Backend Developer", count: 2, allocation: "100%" },
-      { role: "QA Engineer", count: 1, allocation: "75%" },
-      { role: "DevOps Engineer", count: 1, allocation: "25%" },
-    ],
-    totalMembers: 8,
-  },
-  cost: {
-    development: 1200000,
-    design: 250000,
-    testing: 200000,
-    deployment: 100000,
-    total: 1750000,
-  },
-  technology: {
-    frontend: ["Next.js 14", "React 18", "TypeScript", "Tailwind CSS", "Shadcn/ui"],
-    backend: ["Node.js", "Express", "PostgreSQL", "Redis", "Prisma ORM"],
-    infrastructure: ["AWS EC2", "S3", "CloudFront", "Docker", "GitHub Actions"],
-    tools: ["Figma", "VS Code", "Postman", "Jira", "Slack"],
-  },
-};
+function generateEstimate(config: {
+  projectType: string;
+  description: string;
+  features: string;
+  budgetRange: string;
+}): ProjectEstimate {
+  const featureList = config.features
+    .split("\n")
+    .map((f) => f.replace(/^-\s*/, "").trim())
+    .filter(Boolean);
+  
+  const featureCount = Math.max(featureList.length, 3);
+  const isComplex = featureCount > 5 || config.description.toLowerCase().includes("complex") || config.description.toLowerCase().includes("advanced");
+  
+  const baseCost: Record<string, number> = {
+    web: 800000,
+    mobile: 1000000,
+    ai: 1500000,
+    custom: 1200000,
+  };
+  
+  const complexityMultiplier = isComplex ? 1.5 : 1;
+  const featureMultiplier = 1 + (featureCount - 3) * 0.15;
+  const totalBase = (baseCost[config.projectType] || 1000000) * complexityMultiplier * featureMultiplier;
+  
+  const devRatio = 0.55;
+  const designRatio = 0.15;
+  const testingRatio = 0.12;
+  const deployRatio = 0.08;
+  
+  const development = Math.round(totalBase * devRatio / 10000) * 10000;
+  const design = Math.round(totalBase * designRatio / 10000) * 10000;
+  const testing = Math.round(totalBase * testingRatio / 10000) * 10000;
+  const deployment = Math.round(totalBase * deployRatio / 10000) * 10000;
+  const total = development + design + testing + deployment;
+
+  const modules = [
+    "User Authentication & Authorization",
+    "Dashboard & Analytics",
+    "API Integration Layer",
+    "Database Management",
+  ];
+  if (featureCount > 3) modules.push("Real-time Notifications");
+  if (featureCount > 4) modules.push("Admin Panel");
+  if (featureList.some((f) => f.toLowerCase().includes("payment"))) modules.push("Payment Gateway Integration");
+  if (featureList.some((f) => f.toLowerCase().includes("search"))) modules.push("Search & Filtering");
+  if (config.projectType === "ai") modules.push("ML Model Training Pipeline", "Data Processing Engine");
+  if (config.projectType === "mobile") modules.push("Push Notifications", "Offline Sync");
+
+  const weeks = Math.max(8, Math.round(8 + featureCount * 1.5 + (isComplex ? 4 : 0)));
+  
+  const typeTech: Record<string, { frontend: string[]; backend: string[]; infra: string[]; tools: string[] }> = {
+    web: {
+      frontend: ["Next.js 14", "React 18", "TypeScript", "Tailwind CSS"],
+      backend: ["Node.js", "Express", "PostgreSQL", "Redis"],
+      infra: ["AWS EC2", "S3", "Docker", "GitHub Actions"],
+      tools: ["Figma", "VS Code", "Postman", "Jira"],
+    },
+    mobile: {
+      frontend: ["React Native", "Expo", "TypeScript", "AsyncStorage"],
+      backend: ["Node.js", "Firebase", "MongoDB"],
+      infra: ["Firebase Hosting", "App Store", "Play Store"],
+      tools: ["Xcode", "Android Studio", "Fastlane"],
+    },
+    ai: {
+      frontend: ["Next.js", "React", "D3.js", "Tailwind CSS"],
+      backend: ["Python", "FastAPI", "TensorFlow", "PostgreSQL"],
+      infra: ["AWS SageMaker", "S3", "Docker", "MLflow"],
+      tools: ["Jupyter", "VS Code", "Weights & Biases"],
+    },
+    custom: {
+      frontend: ["React", "Vue.js", "TypeScript", "Tailwind CSS"],
+      backend: ["Node.js", "Python", "PostgreSQL", "MongoDB"],
+      infra: ["AWS", "Docker", "Kubernetes", "Terraform"],
+      tools: ["VS Code", "Git", "Jira", "Postman"],
+    },
+  };
+
+  const tech = typeTech[config.projectType] || typeTech.web;
+
+  return {
+    scope: {
+      summary: `A ${isComplex ? "complex" : "standard"} ${projectTypes.find((t) => t.id === config.projectType)?.label || "project"} with ${featureCount} key features. ${config.description.slice(0, 150)}`,
+      modules,
+      complexity: isComplex ? "High" : featureCount > 4 ? "Medium-High" : "Medium",
+    },
+    timeline: {
+      totalWeeks: weeks,
+      phases: [
+        { name: "Discovery & Planning", weeks: Math.max(1, Math.round(weeks * 0.1)) },
+        { name: "UI/UX Design", weeks: Math.max(1, Math.round(weeks * 0.15)) },
+        { name: "Frontend Development", weeks: Math.round(weeks * 0.3) },
+        { name: "Backend Development", weeks: Math.round(weeks * 0.3) },
+        { name: "Testing & QA", weeks: Math.max(1, Math.round(weeks * 0.1)) },
+        { name: "Deployment & Launch", weeks: Math.max(1, Math.round(weeks * 0.05)) },
+      ],
+    },
+    team: {
+      roles: [
+        { role: "Project Manager", count: 1, allocation: "100%" },
+        { role: "UI/UX Designer", count: 1, allocation: "100%" },
+        { role: "Frontend Developer", count: isComplex ? 3 : 2, allocation: "100%" },
+        { role: "Backend Developer", count: isComplex ? 3 : 2, allocation: "100%" },
+        { role: "QA Engineer", count: 1, allocation: "75%" },
+        ...(config.projectType === "ai" ? [{ role: "ML Engineer", count: 1, allocation: "100%" }] : []),
+        { role: "DevOps Engineer", count: 1, allocation: "25%" },
+      ],
+      totalMembers: isComplex ? 10 : 8,
+    },
+    cost: { development, design, testing, deployment, total },
+    technology: {
+      frontend: tech.frontend,
+      backend: tech.backend,
+      infrastructure: tech.infra,
+      tools: tech.tools,
+    },
+  };
+}
 
 export default function AIEstimatorPage() {
   const [form, setForm] = useState({
@@ -167,10 +236,15 @@ export default function AIEstimatorPage() {
     setRevealedSections([]);
 
     setTimeout(() => {
-      setEstimate(mockEstimate);
+      const result = generateEstimate({
+        projectType: form.projectType,
+        description: form.description,
+        features: form.features,
+        budgetRange: form.budgetRange,
+      });
+      setEstimate(result);
       setIsEstimating(false);
 
-      // Staggered reveal of sections
       const sections = ["scope", "timeline", "team", "cost", "technology"];
       sections.forEach((section, index) => {
         setTimeout(() => {

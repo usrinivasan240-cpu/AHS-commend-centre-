@@ -8,6 +8,7 @@ import {
   Plus,
   MoreHorizontal,
   Eye,
+  EyeOff,
   Pencil,
   Trash2,
   ArrowUpDown,
@@ -54,7 +55,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { firestoreAdd } from "@/lib/firebase/firestore";
+import { firestoreAdd, firestoreUpdate, firestoreDelete } from "@/lib/firebase/firestore";
 import { cn, getInitials, getScoreColor } from "@/lib/utils";
 import type { Role, MemberStatus } from "@/types";
 import { useFirestoreQuery } from "@/lib/firebase/hooks";
@@ -129,9 +130,19 @@ export default function PeoplePage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<typeof allMembers[number] | null>(null);
+  const [editForm, setEditForm] = useState(emptyForm);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [userPassword, setUserPassword] = useState("");
+  const [showUserPassword, setShowUserPassword] = useState(false);
+  const [editUserPassword, setEditUserPassword] = useState("");
+  const [showEditPassword, setShowEditPassword] = useState(false);
 
   const { data: firestoreMembers, loading } = useFirestoreQuery(COLLECTIONS.USERS);
 
@@ -185,6 +196,11 @@ export default function PeoplePage() {
   };
 
   const handleAddMember = async () => {
+    if (adminPassword !== "sriadmin@777") {
+      setError("Incorrect admin password.");
+      setSaving(false);
+      return;
+    }
     if (!form.name || !form.email || !form.role) {
       setError("Name, email, and role are required.");
       return;
@@ -203,11 +219,81 @@ export default function PeoplePage() {
         status: form.status,
         performanceScore: 0,
         avatar: null,
+        password: userPassword || null,
       });
       setAddOpen(false);
       setForm(emptyForm);
+      setAdminPassword("");
+      setUserPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add member");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (member: typeof allMembers[number]) => {
+    setSelectedMember(member);
+    setEditForm({
+      name: member.name,
+      email: member.email,
+      role: member.role,
+      team: member.team || "",
+      phone: member.phone || "",
+      skills: Array.isArray(member.skills) ? member.skills.join(", ") : "",
+      joinDate: member.joinDate || new Date().toISOString().split("T")[0],
+      status: member.status,
+    });
+    setEditOpen(true);
+    setError("");
+  };
+
+  const handleEditMember = async () => {
+    if (!selectedMember || !editForm.name || !editForm.email || !editForm.role) {
+      setError("Name, email, and role are required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const updateData: Record<string, unknown> = {
+        name: editForm.name,
+        email: editForm.email,
+        role: editForm.role,
+        team: editForm.team || null,
+        phone: editForm.phone || null,
+        skills: editForm.skills ? editForm.skills.split(",").map((s) => s.trim()) : [],
+        joinDate: editForm.joinDate,
+        status: editForm.status,
+      };
+      if (editUserPassword) {
+        updateData.password = editUserPassword;
+      }
+      await firestoreUpdate(COLLECTIONS.USERS, selectedMember.id, updateData);
+      setEditOpen(false);
+      setSelectedMember(null);
+      setEditUserPassword("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update member");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openDelete = (member: typeof allMembers[number]) => {
+    setSelectedMember(member);
+    setDeleteOpen(true);
+  };
+
+  const handleDeleteMember = async () => {
+    if (!selectedMember) return;
+    setSaving(true);
+    try {
+      await firestoreDelete(COLLECTIONS.USERS, selectedMember.id);
+      setDeleteOpen(false);
+      setSelectedMember(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete member");
     } finally {
       setSaving(false);
     }
@@ -438,12 +524,12 @@ export default function PeoplePage() {
                                   View Profile
                                 </Link>
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openEdit(member)}>
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-danger focus:text-danger">
+                              <DropdownMenuItem className="text-danger focus:text-danger" onClick={() => openDelete(member)}>
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 Remove
                               </DropdownMenuItem>
@@ -467,7 +553,7 @@ export default function PeoplePage() {
 
         {/* Add Member Dialog */}
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogContent className="max-w-lg bg-card border-border">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-card border-border">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-white">
                 <UserPlus className="h-5 w-5 text-primary" />
@@ -578,15 +664,221 @@ export default function PeoplePage() {
                   onChange={(e) => setForm({ ...form, skills: e.target.value })}
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label className="text-foreground">Login Password for User</Label>
+                <div className="relative">
+                  <Input
+                    type={showUserPassword ? "text" : "password"}
+                    placeholder="Set password for this user to login"
+                    value={userPassword}
+                    onChange={(e) => setUserPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPassword(!showUserPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+                  >
+                    {showUserPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted">User can login with this email + password</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-foreground">Admin Password *</Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter admin password to confirm"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); }}>
+              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); setAdminPassword(""); }}>
                 Cancel
               </Button>
               <Button onClick={handleAddMember} loading={saving}>
                 <Save className="mr-2 h-4 w-4" />
                 Add Member
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Member Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-card border-border">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-white">
+                <Pencil className="h-5 w-5 text-primary" />
+                Edit Member
+              </DialogTitle>
+              <DialogDescription>
+                Update team member details.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              {error && (
+                <div className="rounded-lg bg-danger/10 border border-danger/30 p-3 text-sm text-danger">
+                  {error}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-foreground">Full Name *</Label>
+                  <Input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-foreground">Email *</Label>
+                  <Input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-foreground">Role *</Label>
+                  <Select value={editForm.role} onValueChange={(v) => setEditForm({ ...editForm, role: v as Role })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(roleLabels).map(([key, label]) => (
+                        <SelectItem key={key} value={key}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-foreground">Team</Label>
+                  <Select value={editForm.team} onValueChange={(v) => setEditForm({ ...editForm, team: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select team" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Core">Core</SelectItem>
+                      <SelectItem value="Frontend">Frontend</SelectItem>
+                      <SelectItem value="Backend">Backend</SelectItem>
+                      <SelectItem value="AI">AI/ML</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-foreground">Phone</Label>
+                  <Input
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-foreground">Join Date</Label>
+                  <Input
+                    type="date"
+                    value={editForm.joinDate}
+                    onChange={(e) => setEditForm({ ...editForm, joinDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-foreground">Status</Label>
+                <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v as MemberStatus })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-foreground">Skills (comma separated)</Label>
+                <Input
+                  value={editForm.skills}
+                  onChange={(e) => setEditForm({ ...editForm, skills: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-foreground">Change Password</Label>
+                <div className="relative">
+                  <Input
+                    type={showEditPassword ? "text" : "password"}
+                    placeholder="Leave blank to keep current password"
+                    value={editUserPassword}
+                    onChange={(e) => setEditUserPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPassword(!showEditPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+                  >
+                    {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted">Leave empty to keep existing password</p>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setEditOpen(false); setError(""); }}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditMember} loading={saving}>
+                <Save className="mr-2 h-4 w-4" />
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader>
+              <DialogTitle className="text-white">Remove Member</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to remove <strong className="text-foreground">{selectedMember?.name}</strong>? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={handleDeleteMember} loading={saving}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Remove
               </Button>
             </DialogFooter>
           </DialogContent>

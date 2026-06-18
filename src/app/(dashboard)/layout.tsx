@@ -1,5 +1,6 @@
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
+import PermissionGuard from "@/components/layout/permission-guard";
 
 export default function DashboardLayout({
   children,
@@ -13,7 +14,7 @@ export default function DashboardLayout({
         <Header />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-7xl px-6 py-8">
-            {children}
+            <PermissionGuard>{children}</PermissionGuard>
           </div>
         </main>
       </div>

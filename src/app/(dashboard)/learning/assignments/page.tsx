@@ -10,8 +10,10 @@ import {
   X,
   Send,
   CheckCircle2,
-
   FileText,
+  Plus,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,9 +36,8 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-
 } from "@/components/ui/dialog";
-import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -62,18 +63,8 @@ interface Assignment {
   description: string;
   grade?: number;
   feedback?: string;
+  type?: "assignment" | "mini-project";
 }
-
-const mockAssignments: Assignment[] = [
-  { id: "a1", title: "Build a React To-Do App", courseId: "1", dueDate: "2024-08-25", status: "active", priority: "high", description: "Create a fully functional to-do app with CRUD operations using React hooks." },
-  { id: "a2", title: "TypeScript Interface Design", courseId: "2", dueDate: "2024-08-28", status: "active", priority: "medium", description: "Design TypeScript interfaces for a blog platform with proper type safety." },
-  { id: "a3", title: "REST API with Express", courseId: "3", dueDate: "2024-08-20", status: "active", priority: "high", description: "Build a RESTful API for a bookstore with authentication and authorization." },
-  { id: "a4", title: "Python Data Analysis", courseId: "4", dueDate: "2024-08-15", status: "submitted", priority: "medium", description: "Analyze a dataset using pandas and create visualizations with matplotlib." },
-  { id: "a5", title: "System Design Document", courseId: "5", dueDate: "2024-08-10", status: "graded", priority: "low", description: "Write a system design document for a URL shortener service.", grade: 85, feedback: "Good analysis. Consider scalability aspects more." },
-  { id: "a6", title: "Figma Component Library", courseId: "6", dueDate: "2024-08-12", status: "graded", priority: "medium", description: "Create a design system component library in Figma.", grade: 92, feedback: "Excellent work on consistency and documentation." },
-  { id: "a7", title: "AWS Deployment Script", courseId: "7", dueDate: "2024-08-30", status: "active", priority: "high", description: "Write a deployment script for a Node.js app on AWS EC2." },
-  { id: "a8", title: "Next.js Blog Page", courseId: "8", dueDate: "2024-08-18", status: "submitted", priority: "low", description: "Build a blog page with SSR and markdown rendering." },
-];
 
 const priorityVariant: Record<string, "danger" | "warning" | "secondary"> = {
   high: "danger",
@@ -89,24 +80,66 @@ const statusIcon: Record<string, typeof ClipboardList> = {
 
 export default function AssignmentsPage() {
   const { data: courses } = useFirestoreQuery(COLLECTIONS.COURSES);
+  const { data: assignments, loading } = useFirestoreQuery("assignments" as any);
+  const { add, remove, loading: saving } = useFirestoreActions("assignments" as any);
+
   const [tab, setTab] = useState("active");
   const [search, setSearch] = useState("");
-  const [courseFilter, setCourseFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [submissionText, setSubmissionText] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newAssignment, setNewAssignment] = useState({
+    title: "",
+    description: "",
+    courseId: "",
+    dueDate: "",
+    priority: "medium" as "low" | "medium" | "high",
+    type: "assignment" as "assignment" | "mini-project",
+  });
+
+  const activeList = assignments.filter((a: any) => a.status === "active");
+  const submittedList = assignments.filter((a: any) => a.status === "submitted");
+  const gradedList = assignments.filter((a: any) => a.status === "graded");
 
   const filtered = useMemo(() => {
-    let result = mockAssignments.filter((a) => a.status === tab);
+    let result = assignments.filter((a: any) => a.status === tab);
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter((a) => a.title.toLowerCase().includes(q));
-    }
-    if (courseFilter !== "all") {
-      result = result.filter((a) => a.courseId === courseFilter);
+      result = result.filter((a: any) => a.title?.toLowerCase().includes(q));
     }
     return result;
-  }, [tab, search, courseFilter]);
+  }, [tab, search, assignments]);
+
+  const handleCreate = async () => {
+    if (!newAssignment.title.trim()) return;
+    try {
+      await add({
+        title: newAssignment.title,
+        description: newAssignment.description,
+        courseId: newAssignment.courseId || null,
+        dueDate: newAssignment.dueDate,
+        status: "active",
+        priority: newAssignment.priority,
+        type: newAssignment.type,
+        grade: null,
+        feedback: null,
+        createdAt: new Date().toISOString(),
+      });
+      setCreateOpen(false);
+      setNewAssignment({ title: "", description: "", courseId: "", dueDate: "", priority: "medium", type: "assignment" });
+    } catch (err) {
+      console.error("Failed to create:", err);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await remove(id);
+    } catch (err) {
+      console.error("Failed to delete:", err);
+    }
+  };
 
   const handleSubmit = () => {
     setDialogOpen(false);
@@ -119,19 +152,33 @@ export default function AssignmentsPage() {
     setDialogOpen(true);
   };
 
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#00d9ff]" />
+      </div>
+    );
+  }
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-6">
-      <motion.div variants={fadeInUp}>
-        <h1 className="text-3xl font-bold tracking-tight text-white">Assignments</h1>
-        <p className="mt-1 text-[#64748b]">Manage and submit your course assignments</p>
+      <motion.div variants={fadeInUp} className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-white">Assignments</h1>
+          <p className="mt-1 text-[#64748b]">Manage and submit your course assignments</p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Assignment
+        </Button>
       </motion.div>
 
       {/* Stats */}
       <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         {[
-          { label: "Active", value: mockAssignments.filter((a) => a.status === "active").length, icon: Clock, color: "text-[#00d9ff]", bg: "bg-[#00d9ff]/10" },
-          { label: "Submitted", value: mockAssignments.filter((a) => a.status === "submitted").length, icon: Send, color: "text-[#f59e0b]", bg: "bg-[#f59e0b]/10" },
-          { label: "Graded", value: mockAssignments.filter((a) => a.status === "graded").length, icon: CheckCircle2, color: "text-[#10b981]", bg: "bg-[#10b981]/10" },
+          { label: "Active", value: activeList.length, icon: Clock, color: "text-[#00d9ff]", bg: "bg-[#00d9ff]/10" },
+          { label: "Submitted", value: submittedList.length, icon: Send, color: "text-[#f59e0b]", bg: "bg-[#f59e0b]/10" },
+          { label: "Graded", value: gradedList.length, icon: CheckCircle2, color: "text-[#10b981]", bg: "bg-[#10b981]/10" },
         ].map((stat) => {
           const Icon = stat.icon;
           return (
@@ -165,21 +212,8 @@ export default function AssignmentsPage() {
                   icon={<Search className="h-4 w-4" />}
                 />
               </div>
-              <Select value={courseFilter} onValueChange={setCourseFilter}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Filter by course" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Courses</SelectItem>
-                  {courses.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {(search || courseFilter !== "all") && (
-                <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCourseFilter("all"); }}>
+              {search && (
+                <Button variant="ghost" size="sm" onClick={() => setSearch("")}>
                   <X className="mr-1 h-3.5 w-3.5" />
                   Clear
                 </Button>
@@ -218,7 +252,12 @@ export default function AssignmentsPage() {
                               <Icon className="h-5 w-5 text-[#0066ff]" />
                             </div>
                             <div>
-                              <h3 className="font-semibold text-white">{assignment.title}</h3>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold text-white">{assignment.title}</h3>
+                                {assignment.type === "mini-project" && (
+                                  <Badge variant="secondary" className="text-[10px]">Mini-Project</Badge>
+                                )}
+                              </div>
                               <p className="mt-0.5 text-sm text-[#64748b]">{assignment.description}</p>
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#64748b]">
                                 <span className="flex items-center gap-1">
@@ -238,9 +277,14 @@ export default function AssignmentsPage() {
                               {assignment.priority} priority
                             </Badge>
                             {assignment.status === "active" && (
-                              <Button size="sm" onClick={() => openSubmitDialog(assignment)}>
-                                Submit
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <Button size="sm" onClick={() => openSubmitDialog(assignment as Assignment)}>
+                                  Submit
+                                </Button>
+                                <Button size="sm" variant="danger" onClick={() => handleDelete(assignment.id)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             )}
                             {assignment.status === "graded" && assignment.grade !== undefined && (
                               <div className="text-right">
@@ -294,6 +338,79 @@ export default function AssignmentsPage() {
             <Button onClick={handleSubmit} disabled={!submissionText.trim()}>
               <Send className="mr-2 h-4 w-4" />
               Submit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Assignment Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Assignment</DialogTitle>
+            <DialogDescription>Add a new assignment or mini-project</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Title</Label>
+              <Input
+                placeholder="Assignment title"
+                value={newAssignment.title}
+                onChange={(e) => setNewAssignment({ ...newAssignment, title: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                placeholder="Describe the assignment..."
+                value={newAssignment.description}
+                onChange={(e) => setNewAssignment({ ...newAssignment, description: e.target.value })}
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Due Date</Label>
+              <Input
+                type="date"
+                value={newAssignment.dueDate}
+                onChange={(e) => setNewAssignment({ ...newAssignment, dueDate: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Priority</Label>
+                <Select value={newAssignment.priority} onValueChange={(v: any) => setNewAssignment({ ...newAssignment, priority: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select value={newAssignment.type} onValueChange={(v: any) => setNewAssignment({ ...newAssignment, type: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="assignment">Assignment</SelectItem>
+                    <SelectItem value="mini-project">Mini-Project</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={!newAssignment.title.trim() || saving}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              Create
             </Button>
           </DialogFooter>
         </DialogContent>

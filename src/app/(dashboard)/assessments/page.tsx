@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -11,6 +11,8 @@ import {
   ArrowUpRight,
   Timer,
   Target,
+  Loader2,
+  Save,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +21,12 @@ import { Progress } from "@/components/ui/progress";
 import { useFirestoreQuery } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatDate } from "@/lib/utils";
+import { useFirestoreActions } from "@/lib/firebase/hooks";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 import {
   AreaChart,
   Area,
@@ -59,16 +67,8 @@ const scoreTrend = [
 export default function AssessmentsDashboardPage() {
   const { data: assessments, loading } = useFirestoreQuery(COLLECTIONS.ASSESSMENTS);
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="text-sm text-[#64748b]">Loading assessments...</div>
-      </div>
-    );
-  }
-
-  const upcoming = assessments.filter((a) => a.status === "upcoming");
-  const completed = assessments.filter((a) => a.status === "completed");
+  const upcoming = useMemo(() => assessments.filter((a) => a.status === "upcoming"), [assessments]);
+  const completed = useMemo(() => assessments.filter((a) => a.status === "completed"), [assessments]);
 
   const avgScore = useMemo(() => {
     if (completed.length === 0) return 0;
@@ -80,6 +80,50 @@ export default function AssessmentsDashboardPage() {
     if (completed.length === 0) return 0;
     return 87;
   }, [completed]);
+
+  const [showBuilder, setShowBuilder] = useState(false);
+  const { add: addAssessment, loading: savingAssessment } = useFirestoreActions(COLLECTIONS.ASSESSMENTS);
+  const [builderForm, setBuilderForm] = useState({
+    title: "",
+    description: "",
+    duration: "60",
+    totalMarks: "100",
+    passingMarks: "50",
+    scheduledDate: "",
+    type: "mcq",
+  });
+  const [timerEnabled, setTimerEnabled] = useState(true);
+  const [randomize, setRandomize] = useState(false);
+
+  const handleCreateAssessment = async () => {
+    if (!builderForm.title.trim()) return;
+    try {
+      await addAssessment({
+        title: builderForm.title,
+        description: builderForm.description,
+        type: builderForm.type,
+        duration: Number(builderForm.duration),
+        totalMarks: Number(builderForm.totalMarks),
+        passingMarks: Number(builderForm.passingMarks),
+        scheduledDate: builderForm.scheduledDate,
+        status: "upcoming",
+        attempts: 0,
+        antiCheat: { timerEnabled, randomize },
+      });
+      setShowBuilder(false);
+      setBuilderForm({ title: "", description: "", duration: "60", totalMarks: "100", passingMarks: "50", scheduledDate: "", type: "mcq" });
+    } catch (err) {
+      console.error("Failed to create assessment:", err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-[#64748b]">Loading assessments...</div>
+      </div>
+    );
+  }
 
   const stats = [
     { label: "Upcoming Tests", value: upcoming.length, icon: Calendar, color: "text-[#0066ff]", bg: "bg-[#0066ff]/10" },
@@ -95,12 +139,10 @@ export default function AssessmentsDashboardPage() {
           <h1 className="text-3xl font-bold tracking-tight text-white">Assessments</h1>
           <p className="mt-1 text-[#64748b]">Track tests, evaluations, and performance</p>
         </div>
-        <Link href="/assessments/builder">
-          <Button>
-            <ClipboardCheck className="mr-2 h-4 w-4" />
-            Create Assessment
-          </Button>
-        </Link>
+        <Button onClick={() => setShowBuilder(!showBuilder)}>
+          <ClipboardCheck className="mr-2 h-4 w-4" />
+          {showBuilder ? "Close Builder" : "Create Assessment"}
+        </Button>
       </motion.div>
 
       {/* Stats */}
@@ -124,6 +166,67 @@ export default function AssessmentsDashboardPage() {
           );
         })}
       </motion.div>
+
+      {/* Inline Assessment Builder */}
+      {showBuilder && (
+        <motion.div variants={fadeInUp}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <ClipboardCheck className="h-5 w-5 text-[#0066ff]" />
+                Create New Assessment
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Title *</Label>
+                <Input placeholder="e.g., React Fundamentals Quiz" value={builderForm.title} onChange={(e) => setBuilderForm({ ...builderForm, title: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea placeholder="Brief description..." value={builderForm.description} onChange={(e) => setBuilderForm({ ...builderForm, description: e.target.value })} rows={2} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Duration (minutes)</Label>
+                  <Input type="number" value={builderForm.duration} onChange={(e) => setBuilderForm({ ...builderForm, duration: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Schedule Date</Label>
+                  <Input type="date" value={builderForm.scheduledDate} onChange={(e) => setBuilderForm({ ...builderForm, scheduledDate: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Total Marks</Label>
+                  <Input type="number" value={builderForm.totalMarks} onChange={(e) => setBuilderForm({ ...builderForm, totalMarks: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Passing Marks</Label>
+                  <Input type="number" value={builderForm.passingMarks} onChange={(e) => setBuilderForm({ ...builderForm, passingMarks: e.target.value })} />
+                </div>
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <Switch checked={timerEnabled} onCheckedChange={setTimerEnabled} />
+                  <Label className="text-sm">Timer</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch checked={randomize} onCheckedChange={setRandomize} />
+                  <Label className="text-sm">Randomize</Label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setShowBuilder(false)}>Cancel</Button>
+                <Button onClick={handleCreateAssessment} disabled={!builderForm.title.trim() || savingAssessment}>
+                  {savingAssessment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  Publish Assessment
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Score Trend Chart */}

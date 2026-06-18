@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getInitials } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 const pathLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -53,10 +54,11 @@ const pathLabels: Record<string, string> = {
 export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
+  const { logout, user } = useAuth();
   const segments = pathname.split("/").filter(Boolean);
 
-  const userName = "Admin User";
-  const userRole = "Administrator";
+  const userName = user?.name || "Admin User";
+  const userRole = user?.role ? user.role.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Administrator";
   const notificationCount = 5;
 
   return (
@@ -160,7 +162,10 @@ export default function Header() {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => router.push("/")}
+              onClick={() => {
+                logout();
+                router.push("/");
+              }}
               className="text-danger focus:text-danger cursor-pointer"
             >
               <LogOut className="h-4 w-4" />
