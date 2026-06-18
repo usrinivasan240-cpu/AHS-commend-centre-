@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -11,8 +11,15 @@ import {
   XCircle,
   Trophy,
   Send,
+  Mic,
+  MicOff,
+  Play,
+  Square,
+  Volume2,
+  RotateCcw,
+  Loader2,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -23,12 +30,15 @@ import { cn } from "@/lib/utils";
 interface Question {
   id: number;
   type: string;
+  voiceSubtype?: "pronunciation" | "repeat-after-me" | "communication";
   question: string;
+  speakText?: string;
   options?: string[];
   correctAnswer?: string;
   sampleAnswer?: string;
   difficulty: string;
   marks: number;
+  timeLimit?: number;
 }
 
 interface Assessment {
@@ -41,6 +51,255 @@ interface Assessment {
   questions: Question[];
   status: string;
   [key: string]: unknown;
+}
+
+function speakText(text: string, onEnd?: () => void) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.9;
+  u.pitch = 1;
+  if (onEnd) u.onend = onEnd;
+  window.speechSynthesis.speak(u);
+}
+
+function VoiceRecorder({
+  question,
+  onResult,
+  existingTranscript,
+  existingAudioUrl,
+}: {
+  question: Question;
+  onResult: (transcript: string, audioUrl: string) => void;
+  existingTranscript?: string;
+  existingAudioUrl?: string;
+}) {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [transcript, setTranscript] = useState(existingTranscript || "");
+  const [audioUrl, setAudioUrl] = useState(existingAudioUrl || "");
+  const [elapsed, setElapsed] = useState(0);
+  const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const maxTime = question.timeLimit || 120;
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (recognitionRef.current) recognitionRef.current.stop();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, [question.id]);
+
+  useEffect(() => {
+    if (existingTranscript) setTranscript(existingTranscript);
+    if (existingAudioUrl) setAudioUrl(existingAudioUrl);
+  }, [existingTranscript, existingAudioUrl, question.id]);
+
+  const playAIPrompt = useCallback(() => {
+    const text = question.speakText || question.question;
+    setAiSpeaking(true);
+    speakText(text, () => setAiSpeaking(false));
+  }, [question]);
+
+  const startRecording = useCallback(async () => {
+    setTranscript("");
+    setAudioUrl("");
+    setElapsed(0);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+      chunksRef.current = [];
+
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+
+      mr.start();
+
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "en-US";
+        recognitionRef.current = rec;
+
+        rec.onresult = (event: any) => {
+          let finalTranscript = "";
+          for (let i = 0; i < event.results.length; i++) {
+            finalTranscript += event.results[i][0].transcript;
+          }
+          setTranscript(finalTranscript);
+        };
+
+        rec.onerror = (event: any) => {
+          if (event.error === "not-allowed") setPermissionDenied(true);
+        };
+
+        rec.start();
+      }
+
+      setIsRecording(true);
+
+      timerRef.current = setInterval(() => {
+        setElapsed((prev) => {
+          if (prev >= maxTime - 1) {
+            stopRecording();
+            return maxTime;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      setPermissionDenied(true);
+    }
+  }, [maxTime, question]);
+
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (recognitionRef.current) recognitionRef.current.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  }, []);
+
+  useEffect(() => {
+    if (audioUrl && transcript) {
+      onResult(transcript, audioUrl);
+    }
+  }, [audioUrl, transcript]);
+
+  const formatElapsed = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* AI Voice Prompt */}
+      {(question.voiceSubtype === "pronunciation" || question.voiceSubtype === "repeat-after-me" || question.voiceSubtype === "communication") && (
+        <div className="rounded-xl border border-[#1e293b] bg-[#0f172a]/80 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Volume2 className="h-4 w-4 text-[#0066ff]" />
+            <span className="text-xs font-medium text-[#0066ff] uppercase">
+              {question.voiceSubtype === "pronunciation"
+                ? "Read this word aloud"
+                : question.voiceSubtype === "repeat-after-me"
+                ? "Listen & Repeat"
+                : "AI Question"}
+            </span>
+          </div>
+          <p className="text-xl font-semibold text-white mb-3">
+            {question.speakText || question.question}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={playAIPrompt}
+            disabled={aiSpeaking}
+          >
+            {aiSpeaking ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-2 h-4 w-4" />
+            )}
+            {aiSpeaking ? "Speaking..." : "Play Audio"}
+          </Button>
+        </div>
+      )}
+
+      {/* Permission Denied */}
+      {permissionDenied && (
+        <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/5 p-4 text-sm text-[#ef4444]">
+          Microphone access is required for voice assessment. Please allow microphone access in your browser settings and try again.
+        </div>
+      )}
+
+      {/* Recording Controls */}
+      <div className="flex flex-col items-center gap-4 py-6">
+        {/* Mic Button */}
+        <button
+          onClick={isRecording ? stopRecording : startRecording}
+          className={cn(
+            "relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-300",
+            isRecording
+              ? "bg-[#ef4444] shadow-[0_0_40px_rgba(239,68,68,0.4)] animate-pulse"
+              : "bg-[#0066ff] hover:bg-[#0052cc] shadow-[0_0_30px_rgba(0,102,255,0.3)]"
+          )}
+        >
+          {isRecording ? (
+            <Square className="h-10 w-10 text-white fill-white" />
+          ) : (
+            <Mic className="h-10 w-10 text-white" />
+          )}
+          {isRecording && (
+            <span className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-bold text-[#ef4444]">
+              {formatElapsed(elapsed)}
+            </span>
+          )}
+        </button>
+
+        <div className="text-center">
+          {isRecording ? (
+            <p className="text-sm text-[#ef4444] font-medium">
+              Recording... {formatElapsed(elapsed)} / {formatElapsed(maxTime)}
+            </p>
+          ) : audioUrl ? (
+            <p className="text-sm text-[#10b981] font-medium">Recording complete</p>
+          ) : (
+            <p className="text-sm text-[#64748b]">
+              Tap the mic to start recording your response
+            </p>
+          )}
+        </div>
+
+        {/* Audio Playback */}
+        {audioUrl && (
+          <div className="w-full max-w-md">
+            <audio
+              ref={audioRef}
+              src={audioUrl}
+              controls
+              className="w-full rounded-lg"
+              style={{ filter: "invert(1) hue-rotate(180deg)" }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Transcribed Text */}
+      {transcript && (
+        <div className="rounded-xl border border-[#1e293b] bg-[#0a0f1e] p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Mic className="h-4 w-4 text-[#0066ff]" />
+            <span className="text-xs font-medium text-[#64748b] uppercase">Your Response (transcribed)</span>
+          </div>
+          <p className="text-sm text-white leading-relaxed">{transcript}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function TakeAssessmentPage() {
@@ -57,6 +316,7 @@ export default function TakeAssessmentPage() {
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [audioUrls, setAudioUrls] = useState<Record<number, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [started, setStarted] = useState(false);
@@ -97,6 +357,11 @@ export default function TakeAssessmentPage() {
     setAnswers((prev) => ({ ...prev, [questionId]: answer }));
   };
 
+  const handleVoiceResult = (questionId: number, transcript: string, audioUrl: string) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: transcript }));
+    setAudioUrls((prev) => ({ ...prev, [questionId]: audioUrl }));
+  };
+
   const handleSubmit = async () => {
     setSubmitted(true);
     if (!assessment) return;
@@ -106,6 +371,9 @@ export default function TakeAssessmentPage() {
       if (q.type === "mcq" && answers[q.id] === q.correctAnswer) {
         score += q.marks;
       }
+      if (q.type === "voice" && answers[q.id] && answers[q.id].trim().length > 0) {
+        score += q.marks;
+      }
     });
 
     try {
@@ -113,6 +381,7 @@ export default function TakeAssessmentPage() {
         assessmentId: assessment.id,
         assessmentTitle: assessment.title,
         answers,
+        audioUrls,
         score,
         totalMarks: assessment.totalMarks,
         percentage: Math.round((score / assessment.totalMarks) * 100),
@@ -151,10 +420,8 @@ export default function TakeAssessmentPage() {
           Back to Assessments
         </Button>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl text-white">{assessment.title}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-6 space-y-4">
+            <h2 className="text-2xl font-bold text-white">{assessment.title}</h2>
             {assessment.description && (
               <p className="text-[#64748b]">{assessment.description}</p>
             )}
@@ -176,6 +443,15 @@ export default function TakeAssessmentPage() {
                 <p className="text-lg font-bold text-white">{questions.length}</p>
               </div>
             </div>
+            {questions.some((q: Question) => q.type === "voice") && (
+              <div className="rounded-lg border border-[#0066ff]/30 bg-[#0066ff]/5 p-4 text-sm text-[#94a3b8]">
+                <div className="flex items-center gap-2 text-[#0066ff] font-medium mb-1">
+                  <Mic className="h-4 w-4" />
+                  Voice Assessment Detected
+                </div>
+                This test contains voice questions. Make sure your microphone is working and you are in a quiet environment.
+              </div>
+            )}
             <Button className="w-full" size="lg" onClick={() => setStarted(true)}>
               Start Assessment
             </Button>
@@ -190,6 +466,9 @@ export default function TakeAssessmentPage() {
     let score = 0;
     questions.forEach((q: Question) => {
       if (q.type === "mcq" && answers[q.id] === q.correctAnswer) {
+        score += q.marks;
+      }
+      if (q.type === "voice" && answers[q.id] && answers[q.id].trim().length > 0) {
         score += q.marks;
       }
     });
@@ -210,9 +489,6 @@ export default function TakeAssessmentPage() {
             <h2 className="text-2xl font-bold text-white">
               {passed ? "Congratulations! You Passed!" : "Assessment Complete"}
             </h2>
-            <p className="text-[#64748b]">
-              {passed ? "Great job on this assessment." : "Keep practicing and try again."}
-            </p>
             <div className="flex justify-center gap-8 py-4">
               <div>
                 <p className="text-sm text-[#64748b]">Score</p>
@@ -235,18 +511,18 @@ export default function TakeAssessmentPage() {
           </CardContent>
         </Card>
 
-        {/* Review Answers */}
         <div className="space-y-3">
           <h3 className="text-lg font-semibold text-white">Review Answers</h3>
           {questions.map((q: Question, i: number) => {
             const userAnswer = answers[q.id];
             const isCorrect = q.type === "mcq" && userAnswer === q.correctAnswer;
+            const isVoiceAnswered = q.type === "voice" && userAnswer && userAnswer.trim().length > 0;
             return (
-              <Card key={q.id} className={cn("border", isCorrect ? "border-[#10b981]/30" : "border-[#ef4444]/30")}>
+              <Card key={q.id} className={cn("border", (isCorrect || isVoiceAnswered) ? "border-[#10b981]/30" : "border-[#1e293b]")}>
                 <CardContent className="p-4">
                   <div className="flex items-start gap-3">
-                    <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold", isCorrect ? "bg-[#10b981]/15 text-[#10b981]" : "bg-[#ef4444]/15 text-[#ef4444]")}>
-                      {isCorrect ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                    <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold", (isCorrect || isVoiceAnswered) ? "bg-[#10b981]/15 text-[#10b981]" : "bg-[#1e293b] text-[#64748b]")}>
+                      {(isCorrect || isVoiceAnswered) ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
                     </div>
                     <div className="flex-1">
                       <p className="text-sm text-white font-medium">{i + 1}. {q.question}</p>
@@ -255,6 +531,16 @@ export default function TakeAssessmentPage() {
                           <p className="text-xs text-[#64748b]">Your answer: <span className={cn(isCorrect ? "text-[#10b981]" : "text-[#ef4444]")}>{userAnswer || "Not answered"}</span></p>
                           {!isCorrect && q.correctAnswer && (
                             <p className="text-xs text-[#64748b]">Correct answer: <span className="text-[#10b981]">{q.correctAnswer}</span></p>
+                          )}
+                        </div>
+                      )}
+                      {q.type === "voice" && (
+                        <div className="mt-2 space-y-2">
+                          {userAnswer && (
+                            <p className="text-xs text-[#64748b]">Transcript: <span className="text-white">{userAnswer}</span></p>
+                          )}
+                          {audioUrls[q.id] && (
+                            <audio src={audioUrls[q.id]} controls className="w-full max-w-sm rounded-lg" style={{ height: 36, filter: "invert(1) hue-rotate(180deg)" }} />
                           )}
                         </div>
                       )}
@@ -300,12 +586,21 @@ export default function TakeAssessmentPage() {
         <Card>
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-xs">{currentQ.type.toUpperCase()}</Badge>
+              <Badge variant={currentQ.type === "voice" ? "warning" : "outline"} className="text-xs">
+                {currentQ.type === "voice" && <Mic className="mr-1 h-3 w-3" />}
+                {currentQ.type.toUpperCase()}
+              </Badge>
+              {currentQ.voiceSubtype && (
+                <Badge variant="info" className="text-xs capitalize">
+                  {currentQ.voiceSubtype.replace(/-/g, " ")}
+                </Badge>
+              )}
               <Badge variant="outline" className="text-xs capitalize">{currentQ.difficulty}</Badge>
               <Badge variant="outline" className="text-xs">{currentQ.marks} marks</Badge>
             </div>
             <p className="text-lg text-white font-medium">{currentQ.question}</p>
 
+            {/* MCQ Options */}
             {currentQ.type === "mcq" && currentQ.options && (
               <div className="space-y-2">
                 {currentQ.options.map((option: string, i: number) => (
@@ -328,19 +623,25 @@ export default function TakeAssessmentPage() {
               </div>
             )}
 
-            {(currentQ.type === "coding" || currentQ.type === "essay" || currentQ.type === "voice") && (
+            {/* Coding / Essay (textarea) */}
+            {(currentQ.type === "coding" || currentQ.type === "essay") && (
               <textarea
                 className="w-full rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4 text-sm text-white placeholder-[#64748b] focus:border-[#0066ff] focus:outline-none"
-                rows={currentQ.type === "voice" ? 6 : 8}
-                placeholder={
-                  currentQ.type === "coding"
-                    ? "Write your code here..."
-                    : currentQ.type === "voice"
-                    ? "Type your spoken response here (or speak using the mic)..."
-                    : "Write your answer here..."
-                }
+                rows={8}
+                placeholder={currentQ.type === "coding" ? "Write your code here..." : "Write your answer here..."}
                 value={answers[currentQ.id] || ""}
                 onChange={(e) => handleAnswer(currentQ.id, e.target.value)}
+              />
+            )}
+
+            {/* Voice Recording */}
+            {currentQ.type === "voice" && (
+              <VoiceRecorder
+                key={currentQ.id}
+                question={currentQ}
+                onResult={(transcript, audioUrl) => handleVoiceResult(currentQ.id, transcript, audioUrl)}
+                existingTranscript={answers[currentQ.id]}
+                existingAudioUrl={audioUrls[currentQ.id]}
               />
             )}
           </CardContent>

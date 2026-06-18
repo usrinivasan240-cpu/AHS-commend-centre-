@@ -58,7 +58,9 @@ const staggerContainer = {
 interface GeneratedQuestion {
   id: number;
   type: "mcq" | "coding" | "essay" | "voice";
+  voiceSubtype?: "pronunciation" | "repeat-after-me" | "communication";
   question: string;
+  speakText?: string;
   options?: string[];
   correctAnswer?: string;
   sampleAnswer?: string;
@@ -160,34 +162,36 @@ function generateQuestions(config: {
     ],
   };
 
-  const voiceTemplates: Record<string, { q: string; timeLimit: number; answer: string }[]> = {
-    react: [
-      { q: "Explain what React hooks are and list the most commonly used ones.", timeLimit: 120, answer: "React hooks are functions that let you use state and lifecycle features in functional components. Common hooks include useState, useEffect, useContext, useRef, useMemo, and useCallback." },
-      { q: "Describe the difference between state and props in React.", timeLimit: 90, answer: "State is mutable data managed within a component, while props are read-only data passed from parent to child components. State can be updated with setState/useState, props cannot be modified by the receiving component." },
-      { q: "What is the virtual DOM and how does React use it?", timeLimit: 120, answer: "The virtual DOM is a lightweight in-memory representation of the real DOM. React uses it to batch updates and minimize direct DOM manipulation, improving performance through a reconciliation process." },
-      { q: "Explain how you would handle error boundaries in a React application.", timeLimit: 120, answer: "Error boundaries are React components that catch JavaScript errors in their child component tree. They use getDerivedStateFromError and componentDidCatch lifecycle methods to display fallback UI instead of crashing the entire app." },
-    ],
-    javascript: [
-      { q: "Explain the concept of closures in JavaScript with a practical example.", timeLimit: 120, answer: "A closure is a function that retains access to its outer scope variables even after the outer function has returned. For example, a counter function returning an inner function that accesses the count variable." },
-      { q: "What is the event loop and how does asynchronous JavaScript work?", timeLimit: 120, answer: "The event loop continuously monitors the call stack and task queue. When the stack is empty, it processes callbacks from the queue. Microtasks (Promises) have priority over macrotasks (setTimeout, setInterval)." },
-      { q: "Describe the difference between var, let, and const.", timeLimit: 90, answer: "var is function-scoped and hoisted, let is block-scoped and not hoisted, const is block-scoped, not hoisted, and cannot be reassigned after declaration." },
-    ],
-    python: [
-      { q: "Explain list comprehensions and when you would use them.", timeLimit: 90, answer: "List comprehensions provide a concise way to create lists. They are more readable and often faster than traditional for loops for simple list creation operations." },
-      { q: "What are decorators in Python and how do they work?", timeLimit: 120, answer: "Decorators are functions that modify the behavior of other functions or classes. They use the @decorator syntax and are applied at function definition time. They are commonly used for logging, authentication, and caching." },
-      { q: "Explain the difference between deep copy and shallow copy.", timeLimit: 90, answer: "A shallow copy creates a new object but references the same nested objects. A deep copy creates a completely independent copy of the object and all nested objects." },
-    ],
-    general: [
-      { q: "Tell me about your experience with version control systems like Git.", timeLimit: 120, answer: "Expected: Familiarity with git add, commit, push, pull, merge, branches, resolving conflicts, and pull requests." },
-      { q: "How do you approach debugging a complex issue in your code?", timeLimit: 120, answer: "Expected: Systematic approach - reproduce the issue, check logs, use debugging tools, isolate the problem, test hypotheses, and verify the fix." },
-      { q: "Describe a challenging project you worked on and how you solved the problems.", timeLimit: 180, answer: "Expected: Clear explanation of the challenge, the approach taken, technologies used, and the outcome." },
-      { q: "How do you ensure code quality in your projects?", timeLimit: 120, answer: "Expected: Code reviews, testing (unit, integration, e2e), linting, formatting, documentation, and following design patterns." },
-    ],
-  };
+  const voiceTemplates: { q: string; speakText: string; voiceSubtype: string; timeLimit: number; answer: string }[] = [
+    // Pronunciation - tech words
+    { q: "Pronounce this word clearly: Component", speakText: "Component", voiceSubtype: "pronunciation", timeLimit: 30, answer: "Component" },
+    { q: "Pronounce this word clearly: useState", speakText: "use State", voiceSubtype: "pronunciation", timeLimit: 30, answer: "useState" },
+    { q: "Pronounce this word clearly: asynchronous", speakText: "asynchronous", voiceSubtype: "pronunciation", timeLimit: 30, answer: "asynchronous" },
+    { q: "Pronounce this word clearly: polymorphism", speakText: "polymorphism", voiceSubtype: "pronunciation", timeLimit: 30, answer: "polymorphism" },
+    { q: "Pronounce this word clearly: deployment", speakText: "deployment", voiceSubtype: "pronunciation", timeLimit: 30, answer: "deployment" },
+    { q: "Pronounce this word clearly: repository", speakText: "repository", voiceSubtype: "pronunciation", timeLimit: 30, answer: "repository" },
+    { q: "Pronounce this word clearly: refactoring", speakText: "refactoring", voiceSubtype: "pronunciation", timeLimit: 30, answer: "refactoring" },
+    { q: "Pronounce this word clearly: middleware", speakText: "middleware", voiceSubtype: "pronunciation", timeLimit: 30, answer: "middleware" },
+    { q: "Pronounce this word clearly: recursion", speakText: "recursion", voiceSubtype: "pronunciation", timeLimit: 30, answer: "recursion" },
+    { q: "Pronounce this word clearly: environment", speakText: "environment", voiceSubtype: "pronunciation", timeLimit: 30, answer: "environment" },
+    // Repeat after me
+    { q: "Listen carefully and repeat this sentence exactly.", speakText: "The quick brown fox jumps over the lazy dog near the river bank.", voiceSubtype: "repeat-after-me", timeLimit: 30, answer: "The quick brown fox jumps over the lazy dog near the river bank." },
+    { q: "Listen carefully and repeat this sentence exactly.", speakText: "React uses a virtual DOM to efficiently update the user interface.", voiceSubtype: "repeat-after-me", timeLimit: 45, answer: "React uses a virtual DOM to efficiently update the user interface." },
+    { q: "Listen carefully and repeat this sentence exactly.", speakText: "Python is a versatile programming language used for web development and data science.", voiceSubtype: "repeat-after-me", timeLimit: 45, answer: "Python is a versatile programming language used for web development and data science." },
+    { q: "Listen carefully and repeat this sentence exactly.", speakText: "TypeScript adds static type checking to JavaScript for better code quality.", voiceSubtype: "repeat-after-me", timeLimit: 45, answer: "TypeScript adds static type checking to JavaScript for better code quality." },
+    { q: "Listen carefully and repeat this sentence exactly.", speakText: "The developer deployed the application to the production server at midnight.", voiceSubtype: "repeat-after-me", timeLimit: 45, answer: "The developer deployed the application to the production server at midnight." },
+    // Communication - answer questions
+    { q: "What is your name and what programming language do you specialize in?", speakText: "What is your name and what programming language do you specialize in?", voiceSubtype: "communication", timeLimit: 60, answer: "Expected: Clear introduction with name and primary programming language." },
+    { q: "Describe your most challenging project in 2-3 sentences.", speakText: "Describe your most challenging project in two to three sentences.", voiceSubtype: "communication", timeLimit: 90, answer: "Expected: Clear explanation of challenge, approach, and outcome." },
+    { q: "How do you handle working under tight deadlines?", speakText: "How do you handle working under tight deadlines?", voiceSubtype: "communication", timeLimit: 60, answer: "Expected: Mentions prioritization, communication, and time management skills." },
+    { q: "Explain what an API is to a non-technical person.", speakText: "Explain what an API is to a non-technical person.", voiceSubtype: "communication", timeLimit: 90, answer: "Expected: Simple analogy like a waiter taking orders between kitchen and customer." },
+    { q: "Why are you interested in this role and what makes you a good fit?", speakText: "Why are you interested in this role and what makes you a good fit?", voiceSubtype: "communication", timeLimit: 90, answer: "Expected: Genuine interest, relevant skills, and cultural fit." },
+  ];
 
   const getTemplates = (subject: string, type: string) => {
+    if (type === "voice") return voiceTemplates;
     const sub = subject.toLowerCase();
-    const templates: Record<string, Record<string, any[]>> = { mcq: mcqTemplates, coding: codingTemplates, essay: essayTemplates, voice: voiceTemplates };
+    const templates: Record<string, Record<string, any[]>> = { mcq: mcqTemplates, coding: codingTemplates, essay: essayTemplates };
     const bank = templates[type] || mcqTemplates;
     for (const key of Object.keys(bank)) {
       if (sub.includes(key) || key.includes(sub)) return bank[key];
@@ -212,12 +216,14 @@ function generateQuestions(config: {
       q.options = template.opts;
       q.correctAnswer = template.ans;
     }
-    if ((type === "coding" || type === "essay") && template.answer) {
+    if (type === "coding" || type === "essay") {
       q.sampleAnswer = template.answer;
     }
     if (type === "voice") {
+      q.voiceSubtype = template.voiceSubtype;
+      q.speakText = template.speakText;
       q.sampleAnswer = template.answer;
-      q.timeLimit = template.timeLimit || 120;
+      q.timeLimit = template.timeLimit || 60;
     }
     questions.push(q);
   }
