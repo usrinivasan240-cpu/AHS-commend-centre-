@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileCheck,
@@ -20,7 +20,11 @@ import {
   Hash,
   BarChart3,
   Mic,
+  Upload,
+  FileSpreadsheet,
+  Trash2,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -246,6 +250,12 @@ export default function AssessmentGeneratorPage() {
   const [showAnswers, setShowAnswers] = useState<Record<number, boolean>>({});
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState("form");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadedQuestions, setUploadedQuestions] = useState<GeneratedQuestion[]>([]);
+  const [uploadError, setUploadError] = useState("");
+  const [isPublishingUpload, setIsPublishingUpload] = useState(false);
+  const [uploadPublished, setUploadPublished] = useState(false);
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -310,6 +320,135 @@ export default function AssessmentGeneratorPage() {
 
   const toggleAnswer = (id: number) => {
     setShowAnswers((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const parseUploadedFile = (file: File) => {
+    setUploadError("");
+    setUploadedQuestions([]);
+    setUploadPublished(false);
+    setUploadedFileName(file.name);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+        if (rows.length < 2) {
+          setUploadError("File must have a header row and at least one question row.");
+          return;
+        }
+
+        const header = rows[0].map((h: any) => String(h || "").toLowerCase().trim());
+
+        const qCol = header.findIndex((h: string) => h.includes("question"));
+        const typeCol = header.findIndex((h: string) => h.includes("type"));
+        const optACol = header.findIndex((h: string) => h === "option a" || h === "optiona" || h === "opt a" || h === "a");
+        const optBCol = header.findIndex((h: string) => h === "option b" || h === "optionb" || h === "opt b" || h === "b");
+        const optCCol = header.findIndex((h: string) => h === "option c" || h === "optionc" || h === "opt c" || h === "c");
+        const optDCol = header.findIndex((h: string) => h === "option d" || h === "optiond" || h === "opt d" || h === "d");
+        const answerCol = header.findIndex((h: string) => h.includes("answer") || h.includes("correct"));
+        const marksCol = header.findIndex((h: string) => h.includes("mark"));
+        const diffCol = header.findIndex((h: string) => h.includes("difficult") || h.includes("level"));
+        const speakCol = header.findIndex((h: string) => h.includes("speak") || h.includes("audio") || h.includes("pronunciation"));
+
+        if (qCol === -1) {
+          setUploadError("Could not find a 'question' column. Required columns: question (required), type, optionA-D, answer, marks, difficulty.");
+          return;
+        }
+
+        const questions: GeneratedQuestion[] = [];
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || !row[qCol]) continue;
+
+          const questionText = String(row[qCol] || "").trim();
+          if (!questionText) continue;
+
+          const rawType = typeCol >= 0 ? String(row[typeCol] || "").toLowerCase().trim() : "mcq";
+          let qType: "mcq" | "coding" | "essay" | "voice" = "mcq";
+          if (rawType.includes("coding") || rawType.includes("code")) qType = "coding";
+          else if (rawType.includes("essay") || rawType.includes("descriptive")) qType = "essay";
+          else if (rawType.includes("voice") || rawType.includes("oral") || rawType.includes("speak")) qType = "voice";
+
+          const q: GeneratedQuestion = {
+            id: questions.length + 1,
+            type: qType,
+            question: questionText,
+            difficulty: (diffCol >= 0 ? String(row[diffCol] || "medium").toLowerCase().trim() : "medium") as "easy" | "medium" | "hard",
+            marks: marksCol >= 0 ? parseInt(String(row[marksCol] || "10")) || 10 : 10,
+          };
+
+          if (qType === "mcq") {
+            const opts: string[] = [];
+            if (optACol >= 0 && row[optACol]) opts.push(String(row[optACol]).trim());
+            if (optBCol >= 0 && row[optBCol]) opts.push(String(row[optBCol]).trim());
+            if (optCCol >= 0 && row[optCCol]) opts.push(String(row[optCCol]).trim());
+            if (optDCol >= 0 && row[optDCol]) opts.push(String(row[optDCol]).trim());
+            q.options = opts.length > 0 ? opts : undefined;
+            q.correctAnswer = answerCol >= 0 ? String(row[answerCol] || "").trim() : undefined;
+          } else if (qType === "voice") {
+            q.speakText = speakCol >= 0 ? String(row[speakCol] || "").trim() : questionText;
+            q.sampleAnswer = answerCol >= 0 ? String(row[answerCol] || "").trim() : undefined;
+            q.timeLimit = 60;
+          } else {
+            q.sampleAnswer = answerCol >= 0 ? String(row[answerCol] || "").trim() : undefined;
+          }
+
+          questions.push(q);
+        }
+
+        if (questions.length === 0) {
+          setUploadError("No valid questions found in the file.");
+          return;
+        }
+
+        setUploadedQuestions(questions);
+      } catch (err) {
+        setUploadError("Failed to parse file. Please check the format.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (!["xlsx", "xls", "csv", "txt"].includes(ext || "")) {
+      setUploadError("Unsupported file type. Please upload .xlsx, .xls, .csv, or .txt");
+      return;
+    }
+    parseUploadedFile(file);
+    e.target.value = "";
+  };
+
+  const handlePublishUpload = async () => {
+    if (uploadedQuestions.length === 0) return;
+    setIsPublishingUpload(true);
+    try {
+      await add({
+        title: uploadedFileName.replace(/\.[^.]+$/, ""),
+        description: `Uploaded from ${uploadedFileName} — ${uploadedQuestions.length} questions`,
+        type: uploadedQuestions[0]?.type || "mcq",
+        difficulty: uploadedQuestions[0]?.difficulty || "medium",
+        questionCount: uploadedQuestions.length,
+        questions: uploadedQuestions,
+        duration: Math.max(10, Math.ceil(uploadedQuestions.length * 2)),
+        passingMarks: Math.ceil(uploadedQuestions.reduce((s, q) => s + q.marks, 0) * 0.5),
+        totalMarks: uploadedQuestions.reduce((s, q) => s + q.marks, 0),
+        status: "published",
+        scheduledDate: new Date().toISOString(),
+      });
+      setUploadPublished(true);
+    } catch (err) {
+      console.error("Failed to publish uploaded assessment:", err);
+    } finally {
+      setIsPublishingUpload(false);
+    }
   };
 
   const handleCopyAll = () => {
@@ -379,6 +518,10 @@ export default function AssessmentGeneratorPage() {
             <TabsTrigger value="form">
               <Settings className="mr-2 h-4 w-4" />
               Configuration
+            </TabsTrigger>
+            <TabsTrigger value="upload">
+              <Upload className="mr-2 h-4 w-4" />
+              Upload File
             </TabsTrigger>
             <TabsTrigger value="preview" disabled={generatedQuestions.length === 0}>
               <Eye className="mr-2 h-4 w-4" />
@@ -547,6 +690,156 @@ export default function AssessmentGeneratorPage() {
                     )}
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Upload File Tab */}
+          <TabsContent value="upload" className="mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileSpreadsheet className="h-5 w-5 text-primary" />
+                  Upload Questions from File
+                </CardTitle>
+                <p className="text-sm text-muted">
+                  Upload an Excel (.xlsx, .xls), CSV, or TXT file with your questions. Answers are stored in the backend and hidden from test-takers.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Expected Format Info */}
+                <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4">
+                  <p className="text-sm font-medium text-white mb-2">Expected Columns (first row = headers):</p>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-[#64748b]">
+                    <div><span className="text-[#0066ff] font-medium">question</span> (required) — The question text</div>
+                    <div><span className="text-[#0066ff] font-medium">type</span> — mcq, coding, essay, voice</div>
+                    <div><span className="text-[#0066ff] font-medium">optionA / optionB / optionC / optionD</span> — MCQ options</div>
+                    <div><span className="text-[#0066ff] font-medium">answer</span> — Correct answer (hidden from users)</div>
+                    <div><span className="text-[#0066ff] font-medium">marks</span> — Points per question</div>
+                    <div><span className="text-[#0066ff] font-medium">difficulty</span> — easy, medium, hard</div>
+                    <div><span className="text-[#0066ff] font-medium">speakText</span> — For voice type (what AI reads aloud)</div>
+                  </div>
+                </div>
+
+                {/* Upload Area */}
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[#1e293b] bg-[#0a0f1e]/50 p-10 cursor-pointer transition-all hover:border-[#0066ff]/50 hover:bg-[#0066ff]/5"
+                >
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[#0066ff]/10">
+                    <Upload className="h-7 w-7 text-[#0066ff]" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-white">Click to upload or drag & drop</p>
+                    <p className="text-xs text-[#64748b] mt-1">.xlsx, .xls, .csv, .txt</p>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+
+                {/* Error */}
+                {uploadError && (
+                  <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/5 p-4 text-sm text-[#ef4444]">
+                    {uploadError}
+                  </div>
+                )}
+
+                {/* Uploaded File Info */}
+                {uploadedFileName && !uploadError && (
+                  <div className="flex items-center gap-3 rounded-lg border border-[#1e293b] bg-[#0f172a] p-4">
+                    <FileSpreadsheet className="h-5 w-5 text-[#10b981]" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-white">{uploadedFileName}</p>
+                      <p className="text-xs text-[#64748b]">{uploadedQuestions.length} questions parsed</p>
+                    </div>
+                    <button
+                      onClick={() => { setUploadedFileName(""); setUploadedQuestions([]); setUploadPublished(false); }}
+                      className="rounded-md p-1 text-[#64748b] hover:text-[#ef4444] transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Parsed Questions Preview */}
+                {uploadedQuestions.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-white">Parsed Questions ({uploadedQuestions.length})</p>
+                    <div className="max-h-[400px] space-y-2 overflow-y-auto pr-1">
+                      {uploadedQuestions.map((q, i) => (
+                        <div key={i} className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[#0066ff]/10 text-[10px] font-bold text-[#0066ff]">
+                              {i + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge variant="outline" className="text-[10px] uppercase">{q.type}</Badge>
+                                <Badge variant="outline" className="text-[10px] capitalize">{q.difficulty}</Badge>
+                                <Badge variant="outline" className="text-[10px]">{q.marks} marks</Badge>
+                              </div>
+                              <p className="text-sm text-white truncate">{q.question}</p>
+                              {q.options && (
+                                <p className="text-xs text-[#64748b] mt-1">
+                                  Options: {q.options.join(" | ")}
+                                </p>
+                              )}
+                              {q.correctAnswer && (
+                                <p className="text-xs text-[#10b981] mt-1">
+                                  Answer: {q.correctAnswer}
+                                </p>
+                              )}
+                              {q.sampleAnswer && q.type !== "mcq" && (
+                                <p className="text-xs text-[#10b981] mt-1">
+                                  Answer: {q.sampleAnswer.substring(0, 80)}...
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Publish Button */}
+                {uploadedQuestions.length > 0 && (
+                  <div className="flex items-center justify-between rounded-lg border border-[#1e293b] bg-[#0f172a] p-4">
+                    <div>
+                      <p className="text-sm font-medium text-white">
+                        {uploadedQuestions.length} questions ready to publish
+                      </p>
+                      <p className="text-xs text-[#64748b]">
+                        Total marks: {uploadedQuestions.reduce((s, q) => s + q.marks, 0)} · 
+                        Types: {[...new Set(uploadedQuestions.map(q => q.type))].join(", ")}
+                      </p>
+                    </div>
+                    {uploadPublished ? (
+                      <Badge variant="success" className="flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" />
+                        Published to Assessments
+                      </Badge>
+                    ) : (
+                      <Button
+                        onClick={handlePublishUpload}
+                        disabled={isPublishingUpload}
+                        className="bg-[#10b981] hover:bg-[#059669] text-white"
+                      >
+                        {isPublishingUpload ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                        )}
+                        Publish to Assessments
+                      </Button>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
