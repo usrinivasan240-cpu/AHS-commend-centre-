@@ -90,13 +90,26 @@ export function useFirestoreActions(collectionName: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const sanitize = (obj: any): any => {
+    if (Array.isArray(obj)) return obj.map(sanitize).filter(v => v !== undefined);
+    if (obj !== null && typeof obj === "object") {
+      const clean: any = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== undefined) clean[k] = sanitize(v);
+      }
+      return clean;
+    }
+    return obj;
+  };
+
   const add = useCallback(
     async (data: DocumentData) => {
       setLoading(true);
       setError(null);
       try {
+        const clean = sanitize(data);
         const docRef = await addDoc(collection(db, collectionName), {
-          ...data,
+          ...clean,
           createdAt: new Date(),
         });
         setLoading(false);
@@ -115,8 +128,9 @@ export function useFirestoreActions(collectionName: string) {
       setLoading(true);
       setError(null);
       try {
+        const clean = sanitize(data);
         const docRef = doc(db, collectionName, id);
-        await updateDoc(docRef, data);
+        await updateDoc(docRef, clean);
         setLoading(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error");
