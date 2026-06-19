@@ -448,73 +448,67 @@ export default function AssessmentGeneratorPage() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        const strings = content.items.map((item: any) => item.str);
-        fullText += strings.join(" ") + "\n";
+        let lastY = -1;
+        for (const item of content.items as any[]) {
+          if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+            fullText += "\n";
+          }
+          fullText += item.str;
+          if (item.hasEOL) {
+            fullText += "\n";
+          } else {
+            fullText += " ";
+          }
+          lastY = item.transform[5];
+        }
+        fullText += "\n---PAGE---\n";
       }
 
       const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
       const questions: GeneratedQuestion[] = [];
 
-      let currentQ = "";
-      let currentOptions: string[] = [];
-      let currentAnswer = "";
-      let currentMarks = 10;
-      let currentDifficulty = "medium";
-      let currentType = "mcq";
-
-      const flushQuestion = () => {
-        if (!currentQ) return;
-        const q: GeneratedQuestion = {
-          id: questions.length + 1,
-          type: currentType as any,
-          question: currentQ,
-          difficulty: currentDifficulty as any,
-          marks: currentMarks,
-        };
-        if (currentType === "mcq" && currentOptions.length > 0) {
-          q.options = currentOptions;
-          q.correctAnswer = currentAnswer || undefined;
-        } else {
-          q.sampleAnswer = currentAnswer || undefined;
-        }
-        questions.push(q);
-        currentQ = "";
-        currentOptions = [];
-        currentAnswer = "";
-      };
-
       for (const line of lines) {
-        const qMatch = line.match(/^(?:Q|Question|Q\.|Question\s*#?)\s*\d*[\).:\-]?\s*(.+)/i);
-        const optMatch = line.match(/^([A-Da-d])[\).:\-]\s*(.+)/);
-        const ansMatch = line.match(/^(?:Answer|Ans|Correct|Solution|A\.)\s*[:\-]?\s*(.+)/i);
-        const marksMatch = line.match(/(?:marks?|points?|score)\s*[:\-]?\s*(\d+)/i);
-        const diffMatch = line.match(/(?:difficulty|level)\s*[:\-]?\s*(easy|medium|hard)/i);
-        const typeMatch = line.match(/(?:type)\s*[:\-]?\s*(mcq|coding|essay|voice)/i);
+        if (line === "---PAGE---") continue;
 
-        if (qMatch) {
-          flushQuestion();
-          currentQ = qMatch[1].trim();
-          currentType = "mcq";
-        } else if (ansMatch) {
-          currentAnswer = ansMatch[1].trim();
-        } else if (marksMatch) {
-          currentMarks = parseInt(marksMatch[1]) || 10;
-        } else if (diffMatch) {
-          currentDifficulty = diffMatch[1].toLowerCase();
-        } else if (typeMatch) {
-          currentType = typeMatch[1].toLowerCase();
-        } else if (optMatch) {
-          currentOptions.push(optMatch[2].trim());
-        } else if (!currentQ && line.length > 10) {
-          flushQuestion();
-          currentQ = line;
-          currentType = "mcq";
+        const qMatch = line.match(/^Q(?:uestion)?[\s.:]*\d+[\s.:)\-]+\s*(.+)/i);
+        if (!qMatch) continue;
+
+        const questionText = qMatch[1].trim();
+        const opts: string[] = [];
+        let answer = "";
+
+        const qIndex = lines.indexOf(line);
+        for (let j = qIndex + 1; j < Math.min(qIndex + 12, lines.length); j++) {
+          const next = lines[j];
+          if (next === "---PAGE---") break;
+          if (/^Q(?:uestion)?[\s.:]*\d+[\s.:)\-]+/i.test(next)) break;
+
+          const optMatch = next.match(/^([A-D])[\s.)\-:]+\s*(.+)/);
+          if (optMatch) {
+            opts.push(optMatch[2].trim());
+            continue;
+          }
+
+          const ansMatch = next.match(/^(?:Answer|Ans|Correct|Solution)[\s.:]+\s*(?:([A-D])[\s.)\-:]+)?(.+)/i);
+          if (ansMatch) {
+            answer = ansMatch[2] ? ansMatch[2].trim() : ansMatch[1] || "";
+            continue;
+          }
         }
+
+        questions.push({
+          id: questions.length + 1,
+          type: "mcq",
+          question: questionText,
+          options: opts.length > 0 ? opts : undefined,
+          correctAnswer: answer || undefined,
+          difficulty: "medium",
+          marks: 10,
+        });
       }
-      flushQuestion();
 
       if (questions.length === 0) {
-        setUploadError("Could not parse questions from PDF. Ensure the format follows: Q: question, A) option, Answer: answer");
+        setUploadError("Could not parse questions from PDF. Expected format:\nQ1: Question text\nA) Option 1\nB) Option 2\nAnswer: A) Correct answer");
         return;
       }
 
