@@ -23,6 +23,7 @@ import {
   Upload,
   FileSpreadsheet,
   Trash2,
+  FileText,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -418,12 +419,109 @@ export default function AssessmentGeneratorPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!["xlsx", "xls", "csv", "txt"].includes(ext || "")) {
-      setUploadError("Unsupported file type. Please upload .xlsx, .xls, .csv, or .txt");
+    if (!["xlsx", "xls", "csv", "txt", "pdf"].includes(ext || "")) {
+      setUploadError("Unsupported file type. Please upload .xlsx, .xls, .csv, .txt, or .pdf");
       return;
     }
-    parseUploadedFile(file);
+    if (ext === "pdf") {
+      parsePdfFile(file);
+    } else {
+      parseUploadedFile(file);
+    }
     e.target.value = "";
+  };
+
+  const parsePdfFile = async (file: File) => {
+    setUploadError("");
+    setUploadedQuestions([]);
+    setUploadPublished(false);
+    setUploadedFileName(file.name);
+
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const strings = content.items.map((item: any) => item.str);
+        fullText += strings.join(" ") + "\n";
+      }
+
+      const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
+      const questions: GeneratedQuestion[] = [];
+
+      let currentQ = "";
+      let currentOptions: string[] = [];
+      let currentAnswer = "";
+      let currentMarks = 10;
+      let currentDifficulty = "medium";
+      let currentType = "mcq";
+
+      const flushQuestion = () => {
+        if (!currentQ) return;
+        const q: GeneratedQuestion = {
+          id: questions.length + 1,
+          type: currentType as any,
+          question: currentQ,
+          difficulty: currentDifficulty as any,
+          marks: currentMarks,
+        };
+        if (currentType === "mcq" && currentOptions.length > 0) {
+          q.options = currentOptions;
+          q.correctAnswer = currentAnswer || undefined;
+        } else {
+          q.sampleAnswer = currentAnswer || undefined;
+        }
+        questions.push(q);
+        currentQ = "";
+        currentOptions = [];
+        currentAnswer = "";
+      };
+
+      for (const line of lines) {
+        const qMatch = line.match(/^(?:Q|Question|Q\.|Question\s*#?)\s*\d*[\).:\-]?\s*(.+)/i);
+        const optMatch = line.match(/^([A-Da-d])[\).:\-]\s*(.+)/);
+        const ansMatch = line.match(/^(?:Answer|Ans|Correct|Solution|A\.)\s*[:\-]?\s*(.+)/i);
+        const marksMatch = line.match(/(?:marks?|points?|score)\s*[:\-]?\s*(\d+)/i);
+        const diffMatch = line.match(/(?:difficulty|level)\s*[:\-]?\s*(easy|medium|hard)/i);
+        const typeMatch = line.match(/(?:type)\s*[:\-]?\s*(mcq|coding|essay|voice)/i);
+
+        if (qMatch) {
+          flushQuestion();
+          currentQ = qMatch[1].trim();
+          currentType = "mcq";
+        } else if (ansMatch) {
+          currentAnswer = ansMatch[1].trim();
+        } else if (marksMatch) {
+          currentMarks = parseInt(marksMatch[1]) || 10;
+        } else if (diffMatch) {
+          currentDifficulty = diffMatch[1].toLowerCase();
+        } else if (typeMatch) {
+          currentType = typeMatch[1].toLowerCase();
+        } else if (optMatch) {
+          currentOptions.push(optMatch[2].trim());
+        } else if (!currentQ && line.length > 10) {
+          flushQuestion();
+          currentQ = line;
+          currentType = "mcq";
+        }
+      }
+      flushQuestion();
+
+      if (questions.length === 0) {
+        setUploadError("Could not parse questions from PDF. Ensure the format follows: Q: question, A) option, Answer: answer");
+        return;
+      }
+
+      setUploadedQuestions(questions);
+    } catch (err) {
+      setUploadError("Failed to parse PDF. Please ensure it contains readable text.");
+    }
   };
 
   const handlePublishUpload = async () => {
@@ -731,12 +829,12 @@ export default function AssessmentGeneratorPage() {
                   </div>
                   <div className="text-center">
                     <p className="text-sm font-medium text-white">Click to upload or drag & drop</p>
-                    <p className="text-xs text-[#64748b] mt-1">.xlsx, .xls, .csv, .txt</p>
+                    <p className="text-xs text-[#64748b] mt-1">.xlsx, .xls, .csv, .txt, .pdf</p>
                   </div>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".xlsx,.xls,.csv,.txt"
+                    accept=".xlsx,.xls,.csv,.txt,.pdf"
                     onChange={handleFileSelect}
                     className="hidden"
                   />
