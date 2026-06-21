@@ -561,6 +561,34 @@ export default function AssessmentGeneratorContent() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleExport = () => {
+    const rows = generatedQuestions.map((q, i) => {
+      const row: Record<string, any> = {
+        "#": i + 1,
+        Question: q.question,
+        Type: q.type.toUpperCase(),
+        Difficulty: q.difficulty,
+        Marks: q.marks,
+      };
+      if (q.type === "mcq" && q.options) {
+        q.options.forEach((opt, j) => {
+          row[`Option ${String.fromCharCode(65 + j)}`] = opt;
+        });
+        row["Answer"] = q.correctAnswer || "";
+      } else {
+        row["Sample Answer"] = q.sampleAnswer || "";
+        if (q.type === "voice" && q.speakText) {
+          row["Speak Text"] = q.speakText;
+        }
+      }
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Assessment");
+    XLSX.writeFile(wb, `assessment-${Date.now()}.xlsx`);
+  };
+
   const totalMarks = generatedQuestions.reduce((sum, q) => sum + q.marks, 0);
 
   const typeIcons = {
@@ -966,7 +994,7 @@ export default function AssessmentGeneratorContent() {
                         )}
                         {copied ? "Copied!" : "Copy All"}
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => alert('Exporting assessment...')}>
+                      <Button variant="outline" size="sm" onClick={handleExport}>
                         <Download className="mr-2 h-4 w-4" />
                         Export
                       </Button>

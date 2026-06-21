@@ -11,6 +11,8 @@ import {
   Crown,
   ArrowUpRight,
   Save,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,9 +38,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { firestoreAdd } from "@/lib/firebase/firestore";
+import { useAuth } from "@/lib/auth-context";
 import { cn, getInitials, getScoreColor } from "@/lib/utils";
 
 const fadeInUp = {
@@ -54,8 +57,11 @@ const staggerContainer = {
 };
 
 export default function TeamsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super-admin";
   const { data: firestoreTeams, loading: teamsLoading } = useFirestoreQuery(COLLECTIONS.TEAMS);
   const { data: firestoreMembers, loading: membersLoading } = useFirestoreQuery(COLLECTIONS.USERS);
+  const { update: updateTeam, remove: removeTeam } = useFirestoreActions(COLLECTIONS.TEAMS);
 
   const loading = teamsLoading || membersLoading;
 
@@ -104,6 +110,44 @@ export default function TeamsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ name: "", leadId: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openEdit = (team: any) => {
+    setEditTarget(team);
+    setEditForm({ name: team.name || "", leadId: team.leadId || "" });
+  };
+
+  const handleEditTeam = async () => {
+    if (!editTarget || !editForm.name) return;
+    setEditSaving(true);
+    try {
+      await updateTeam(editTarget.id, {
+        name: editForm.name,
+        leadId: editForm.leadId || "",
+      });
+      setEditTarget(null);
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+    setEditSaving(false);
+  };
+
+  const handleDeleteTeam = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await removeTeam(deleteTarget.id);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
   };
 
   return (
@@ -173,11 +217,31 @@ export default function TeamsPage() {
                         </div>
                       )}
                     </div>
-                    <Badge
-                      variant={team.performance >= 85 ? "success" : team.performance >= 75 ? "warning" : "danger"}
-                    >
-                      {team.performance}%
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={team.performance >= 85 ? "success" : team.performance >= 75 ? "warning" : "danger"}
+                      >
+                        {team.performance}%
+                      </Badge>
+                      {isAdmin && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openEdit(team)}
+                            className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#0066ff] transition-colors"
+                            title="Edit"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(team)}
+                            className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#ef4444] transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -308,6 +372,71 @@ export default function TeamsPage() {
             <Button onClick={handleCreateTeam} loading={saving}>
               <Save className="mr-2 h-4 w-4" />
               Create Team
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Team Dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="max-w-md bg-card border-border max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Pencil className="h-5 w-5 text-[#0066ff]" />
+              Edit Team
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-foreground">Team Name *</Label>
+              <Input
+                placeholder="e.g. Frontend Team"
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-foreground">Team Lead</Label>
+              <Select value={editForm.leadId} onValueChange={(v) => setEditForm({ ...editForm, leadId: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select team lead" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allMembers.map((member: any) => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={handleEditTeam} loading={editSaving}>
+              {editSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Team</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.name}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={handleDeleteTeam}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   LayoutGrid,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,7 @@ import {
 import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, getInitials, formatDate } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 import {
   Dialog,
   DialogContent,
@@ -88,6 +91,8 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
 }
 
 export default function ProjectsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super-admin";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
@@ -100,7 +105,7 @@ export default function ProjectsPage() {
   const { data: projects, loading: projectsLoading } = useFirestoreQuery(COLLECTIONS.PROJECTS);
   const { data: teams } = useFirestoreQuery(COLLECTIONS.TEAMS);
   const { data: members } = useFirestoreQuery(COLLECTIONS.USERS);
-  const { add: addProject, loading: addingProject } = useFirestoreActions(COLLECTIONS.PROJECTS);
+  const { add: addProject, update: updateProject, remove: removeProject, loading: addingProject } = useFirestoreActions(COLLECTIONS.PROJECTS);
 
   const uniqueStatuses = useMemo(() => Array.from(new Set(projects.map((p) => p.status as string))), [projects]);
   const uniquePriorities = useMemo(() => Array.from(new Set(projects.map((p) => p.priority as string))), [projects]);
@@ -185,6 +190,71 @@ export default function ProjectsPage() {
     });
     setCreateDialogOpen(false);
     setNewProject({ name: "", description: "", clientName: "", startDate: "", endDate: "", budget: "", priority: "medium", teamId: "" });
+  };
+
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ name: "", description: "", clientName: "", startDate: "", endDate: "", budget: "", priority: "medium" as "low" | "medium" | "high" | "critical", teamId: "", status: "new", progress: 0 });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openEdit = (project: any, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditTarget(project);
+    setEditForm({
+      name: project.name || "",
+      description: project.description || "",
+      clientName: project.clientName || "",
+      startDate: project.startDate || "",
+      endDate: project.endDate || "",
+      budget: String(project.budget || ""),
+      priority: project.priority || "medium",
+      teamId: project.teamId || "",
+      status: project.status || "new",
+      progress: project.progress || 0,
+    });
+  };
+
+  const handleEditProject = async () => {
+    if (!editTarget || !editForm.name) return;
+    setEditSaving(true);
+    try {
+      await updateProject(editTarget.id, {
+        name: editForm.name,
+        description: editForm.description,
+        clientName: editForm.clientName,
+        startDate: editForm.startDate,
+        endDate: editForm.endDate,
+        budget: Number(editForm.budget) || 0,
+        priority: editForm.priority,
+        teamId: editForm.teamId,
+        status: editForm.status,
+        progress: editForm.progress,
+      });
+      setEditTarget(null);
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+    setEditSaving(false);
+  };
+
+  const openDelete = (project: any, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeleteTarget(project);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await removeProject(deleteTarget.id);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
   };
 
   if (projectsLoading) {
@@ -359,10 +429,28 @@ export default function ProjectsPage() {
                         </h3>
                         <p className="mt-0.5 text-xs text-muted truncate">{project.clientName}</p>
                       </div>
-                      <div className="flex gap-1.5 ml-2">
+                      <div className="flex items-center gap-1.5 ml-2">
                         <Badge variant={statusVariant[project.status]} className="text-[10px] capitalize">
                           {project.status.replace(/-/g, " ")}
                         </Badge>
+                        {isAdmin && (
+                          <>
+                            <button
+                              onClick={(e) => openEdit(project, e)}
+                              className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#0066ff] transition-colors"
+                              title="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => openDelete(project, e)}
+                              className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#ef4444] transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -507,6 +595,120 @@ export default function ProjectsPage() {
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleCreateProject} disabled={addingProject || !newProject.name || !newProject.startDate || !newProject.endDate}>
               {addingProject ? "Creating..." : "Create Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Project Dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Pencil className="h-5 w-5 text-[#0066ff]" />
+              Edit Project
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Project Name *</Label>
+              <Input placeholder="e.g. E-Commerce Platform" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea placeholder="Brief project description..." value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Client Name</Label>
+              <Input placeholder="e.g. RetailCorp" value={editForm.clientName} onChange={(e) => setEditForm({ ...editForm, clientName: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Start Date *</Label>
+                <Input type="date" value={editForm.startDate} onChange={(e) => setEditForm({ ...editForm, startDate: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>End Date *</Label>
+                <Input type="date" value={editForm.endDate} onChange={(e) => setEditForm({ ...editForm, endDate: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Budget</Label>
+                <Input type="number" placeholder="e.g. 500000" value={editForm.budget} onChange={(e) => setEditForm({ ...editForm, budget: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Priority</Label>
+                <Select value={editForm.priority} onValueChange={(v) => setEditForm({ ...editForm, priority: v as "low" | "medium" | "high" | "critical" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">New</SelectItem>
+                    <SelectItem value="in-progress">In Progress</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="delayed">Delayed</SelectItem>
+                    <SelectItem value="review">Review</SelectItem>
+                    <SelectItem value="testing">Testing</SelectItem>
+                    <SelectItem value="on-hold">On Hold</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Progress (%)</Label>
+                <Input type="number" min="0" max="100" value={editForm.progress} onChange={(e) => setEditForm({ ...editForm, progress: parseInt(e.target.value) || 0 })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Team</Label>
+              <Select value={editForm.teamId} onValueChange={(v) => setEditForm({ ...editForm, teamId: v })}>
+                <SelectTrigger><SelectValue placeholder="Select team" /></SelectTrigger>
+                <SelectContent>
+                  {teams.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={handleEditProject} disabled={editSaving || !editForm.name}>
+              {editSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Project</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.name}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={handleDeleteProject}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

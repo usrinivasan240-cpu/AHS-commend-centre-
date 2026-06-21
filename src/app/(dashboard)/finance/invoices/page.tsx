@@ -14,6 +14,7 @@ import {
   Trash2,
   Calendar,
   IndianRupee,
+  Pencil,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -63,9 +65,11 @@ const statusVariant: Record<string, "success" | "default" | "danger" | "secondar
 };
 
 export default function InvoicesPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super-admin";
   const { data: invoices, loading } = useFirestoreQuery(COLLECTIONS.INVOICES);
   const { data: clients } = useFirestoreQuery(COLLECTIONS.CLIENTS);
-  const { add: addInvoiceToFirestore } = useFirestoreActions(COLLECTIONS.INVOICES);
+  const { add: addInvoiceToFirestore, update: updateInvoice, remove: removeInvoice } = useFirestoreActions(COLLECTIONS.INVOICES);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -77,6 +81,12 @@ export default function InvoicesPage() {
     items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as { description: string; quantity: number; rate: number; amount: number }[],
     notes: "",
   });
+
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ clientId: "", items: [{ description: "", quantity: 1, rate: 0, amount: 0 }] as { description: string; quantity: number; rate: number; amount: number }[], notes: "", status: "draft", dueDate: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const getClientName = (clientId: string) => {
     return clients.find((c: any) => c.id === clientId)?.name || "Unknown";
@@ -138,6 +148,68 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error("Failed to create invoice:", err);
     }
+  };
+
+  const openEdit = (invoice: any) => {
+    setEditTarget(invoice);
+    setEditForm({
+      clientId: invoice.clientId || "",
+      items: invoice.items ? JSON.parse(JSON.stringify(invoice.items)) : [{ description: "", quantity: 1, rate: 0, amount: 0 }],
+      notes: invoice.notes || "",
+      status: invoice.status || "draft",
+      dueDate: invoice.dueDate || "",
+    });
+  };
+
+  const handleEditItemChange = (index: number, field: string, value: string | number) => {
+    const updated = [...editForm.items];
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === "quantity" || field === "rate") {
+      updated[index].amount = updated[index].quantity * updated[index].rate;
+    }
+    setEditForm({ ...editForm, items: updated });
+  };
+
+  const handleEditAddItem = () => {
+    setEditForm({ ...editForm, items: [...editForm.items, { description: "", quantity: 1, rate: 0, amount: 0 }] });
+  };
+
+  const handleEditRemoveItem = (index: number) => {
+    if (editForm.items.length > 1) {
+      setEditForm({ ...editForm, items: editForm.items.filter((_, i) => i !== index) });
+    }
+  };
+
+  const handleEditInvoice = async () => {
+    if (!editTarget) return;
+    setEditSaving(true);
+    try {
+      const total = editForm.items.reduce((sum, item) => sum + item.amount, 0);
+      await updateInvoice(editTarget.id, {
+        clientId: editForm.clientId,
+        items: editForm.items,
+        amount: total,
+        notes: editForm.notes,
+        status: editForm.status,
+        dueDate: editForm.dueDate,
+      });
+      setEditTarget(null);
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+    setEditSaving(false);
+  };
+
+  const handleDeleteInvoice = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await removeInvoice(deleteTarget.id);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
   };
 
   return (
@@ -268,9 +340,26 @@ export default function InvoicesPage() {
                                 <Send className="h-4 w-4" />
                               </Button>
                             )}
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-danger" onClick={() => alert(`Deleting invoice ${invoice.id}...`)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {isAdmin && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => openEdit(invoice)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-danger"
+                                  onClick={() => setDeleteTarget(invoice)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </motion.tr>
@@ -482,6 +571,116 @@ export default function InvoicesPage() {
             <Button variant="outline" onClick={() => alert('Exporting PDF...')}>
               <Download className="mr-2 h-4 w-4" />
               Export PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Invoice Dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Pencil className="h-5 w-5 text-[#0066ff]" />
+              Edit Invoice
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label>Client</Label>
+              <Select value={editForm.clientId} onValueChange={(v) => setEditForm({ ...editForm, clientId: v })}>
+                <SelectTrigger><SelectValue placeholder="Select a client" /></SelectTrigger>
+                <SelectContent>
+                  {clients.map((client: any) => (
+                    <SelectItem key={client.id} value={client.id}>{client.name} - {client.company}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Line Items</Label>
+                <Button variant="ghost" size="sm" onClick={handleEditAddItem}>
+                  <Plus className="mr-1 h-3 w-3" /> Add Item
+                </Button>
+              </div>
+              {editForm.items.map((item, index) => (
+                <div key={index} className="grid grid-cols-12 gap-2 items-end">
+                  <div className="col-span-5">
+                    <Label className="text-xs">Description</Label>
+                    <Input placeholder="Item description" value={item.description} onChange={(e) => handleEditItemChange(index, "description", e.target.value)} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Qty</Label>
+                    <Input type="number" min="1" value={item.quantity} onChange={(e) => handleEditItemChange(index, "quantity", parseInt(e.target.value) || 1)} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Rate</Label>
+                    <Input type="number" min="0" value={item.rate} onChange={(e) => handleEditItemChange(index, "rate", parseInt(e.target.value) || 0)} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Amount</Label>
+                    <Input value={formatCurrency(item.amount)} disabled className="font-medium" />
+                  </div>
+                  <div className="col-span-1">
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-danger" onClick={() => handleEditRemoveItem(index)} disabled={editForm.items.length === 1}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-end border-t border-border/50 pt-3">
+                <div className="text-right">
+                  <p className="text-sm text-muted">Total Amount</p>
+                  <p className="text-2xl font-bold text-white">{formatCurrency(editForm.items.reduce((sum, item) => sum + item.amount, 0))}</p>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="sent">Sent</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="overdue">Overdue</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Due Date</Label>
+                <Input type="date" value={editForm.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes (Optional)</Label>
+              <Textarea placeholder="Additional notes or payment terms..." value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={handleEditInvoice} disabled={editSaving || !editForm.clientId}>
+              {editSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Invoice</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete invoice <span className="font-semibold text-white">{deleteTarget?.id}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button className="bg-[#ef4444] hover:bg-[#dc2626] text-white" onClick={handleDeleteInvoice} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

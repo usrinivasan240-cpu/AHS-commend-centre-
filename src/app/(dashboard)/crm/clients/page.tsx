@@ -14,6 +14,8 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import {
   Card,
@@ -26,9 +28,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { useFirestoreQuery } from "@/lib/firebase/hooks";
+import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import { cn, formatCurrency, formatDate, getInitials } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -45,10 +64,22 @@ const staggerContainer = {
 };
 
 export default function ClientsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super-admin";
   const { data: clients, loading } = useFirestoreQuery(COLLECTIONS.CLIENTS);
+  const { update: updateClient, remove: removeClient, add: addClient } = useFirestoreActions(COLLECTIONS.CLIENTS);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ name: "", company: "", email: "", phone: "", status: "active", notes: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: "", company: "", email: "", phone: "", status: "active", notes: "" });
+  const [creating, setCreating] = useState(false);
 
   const filteredClients = useMemo(() => {
     let result = [...clients];
@@ -69,6 +100,72 @@ export default function ClientsPage() {
 
   const totalRevenue = clients.reduce((sum: number, c: any) => sum + (c.totalRevenue || 0), 0);
 
+  const openEdit = (client: any) => {
+    setEditTarget(client);
+    setEditForm({
+      name: client.name || "",
+      company: client.company || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      status: client.status || "active",
+      notes: client.notes || "",
+    });
+  };
+
+  const handleEditClient = async () => {
+    if (!editTarget || !editForm.name) return;
+    setEditSaving(true);
+    try {
+      await updateClient(editTarget.id, {
+        name: editForm.name,
+        company: editForm.company,
+        email: editForm.email,
+        phone: editForm.phone,
+        status: editForm.status,
+        notes: editForm.notes,
+      });
+      setEditTarget(null);
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+    setEditSaving(false);
+  };
+
+  const handleDeleteClient = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await removeClient(deleteTarget.id);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
+  };
+
+  const handleCreateClient = async () => {
+    if (!createForm.name) return;
+    setCreating(true);
+    try {
+      await addClient({
+        name: createForm.name,
+        company: createForm.company,
+        email: createForm.email,
+        phone: createForm.phone,
+        status: createForm.status,
+        notes: createForm.notes,
+        projects: [],
+        totalRevenue: 0,
+        since: new Date().toISOString(),
+      });
+      setCreateOpen(false);
+      setCreateForm({ name: "", company: "", email: "", phone: "", status: "active", notes: "" });
+    } catch (err) {
+      console.error("Create failed:", err);
+    }
+    setCreating(false);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -84,14 +181,22 @@ export default function ClientsPage() {
       variants={staggerContainer}
       className="space-y-8"
     >
-      <motion.div variants={fadeInUp}>
-        <h1 className="text-3xl font-bold tracking-tight text-white">
-          <span className="gradient-text">Clients</span>
-        </h1>
-        <p className="mt-1 text-muted">
-          {clients.length} client{clients.length !== 1 ? "s" : ""} • Total revenue:{" "}
-          {formatCurrency(totalRevenue)}
-        </p>
+      <motion.div variants={fadeInUp} className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-white">
+            <span className="gradient-text">Clients</span>
+          </h1>
+          <p className="mt-1 text-muted">
+            {clients.length} client{clients.length !== 1 ? "s" : ""} • Total revenue:{" "}
+            {formatCurrency(totalRevenue)}
+          </p>
+        </div>
+        {isAdmin && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Users className="mr-2 h-4 w-4" />
+            Add Client
+          </Button>
+        )}
       </motion.div>
 
       {/* Filters */}
@@ -153,12 +258,32 @@ export default function ClientsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <h3 className="font-semibold text-white">{client.name}</h3>
-                          <Badge
-                            variant={client.status === "active" ? "success" : "secondary"}
-                            className="text-[10px] capitalize"
-                          >
-                            {client.status}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={client.status === "active" ? "success" : "secondary"}
+                              className="text-[10px] capitalize"
+                            >
+                              {client.status}
+                            </Badge>
+                            {isAdmin && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => openEdit(client)}
+                                  className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#0066ff] transition-colors"
+                                  title="Edit"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setDeleteTarget(client)}
+                                  className="rounded-md p-1 text-[#64748b] hover:bg-[#1e293b] hover:text-[#ef4444] transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <p className="text-xs text-muted mt-0.5">{client.company}</p>
                       </div>
@@ -268,6 +393,128 @@ export default function ClientsPage() {
       {filteredClients.length === 0 && (
         <div className="py-12 text-center text-muted">No clients found.</div>
       )}
+
+      {/* Create Client Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Users className="h-5 w-5 text-[#0066ff]" />
+              Add New Client
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Name *</Label>
+              <Input placeholder="Client name" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Company</Label>
+              <Input placeholder="Company name" value={createForm.company} onChange={(e) => setCreateForm({ ...createForm, company: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input type="email" placeholder="email@example.com" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input placeholder="+91 98765 43210" value={createForm.phone} onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={createForm.status} onValueChange={(v) => setCreateForm({ ...createForm, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Textarea placeholder="Additional notes..." value={createForm.notes} onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateClient} disabled={creating || !createForm.name}>
+              {creating ? "Creating..." : "Create Client"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Client Dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Pencil className="h-5 w-5 text-[#0066ff]" />
+              Edit Client
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Name *</Label>
+              <Input placeholder="Client name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Company</Label>
+              <Input placeholder="Company name" value={editForm.company} onChange={(e) => setEditForm({ ...editForm, company: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input type="email" placeholder="email@example.com" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input placeholder="+91 98765 43210" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Textarea placeholder="Additional notes..." value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={handleEditClient} disabled={editSaving || !editForm.name}>
+              {editSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Client</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.name}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button className="bg-[#ef4444] hover:bg-[#dc2626] text-white" onClick={handleDeleteClient} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }
