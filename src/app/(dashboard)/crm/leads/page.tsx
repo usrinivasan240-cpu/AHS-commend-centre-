@@ -94,6 +94,8 @@ export default function LeadsPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ added: number; merged: number; total: number; errors: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [newLead, setNewLead] = useState({
     name: "",
@@ -171,8 +173,9 @@ export default function LeadsPage() {
   };
 
   const handleDeleteLead = async (leadId: string) => {
-    if (!confirm("Delete this lead permanently?")) return;
-    try { await removeLead(leadId); setDetailLead(null); } catch (err) { console.error(err); }
+    setDeleting(true);
+    try { await removeLead(leadId); setDetailLead(null); setDeleteTarget(null); } catch (err) { console.error(err); }
+    setDeleting(false);
   };
 
   const handleAddLead = async () => {
@@ -496,6 +499,9 @@ export default function LeadsPage() {
                                 <UserCheck className="h-3.5 w-3.5 text-[#10b981]" />
                               </Button>
                             )}
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteTarget(lead)} title="Delete Lead">
+                              <Trash2 className="h-3.5 w-3.5 text-[#ef4444]" />
+                            </Button>
                           </div>
                         </td>
                       </motion.tr>
@@ -607,7 +613,7 @@ export default function LeadsPage() {
                 )}
               </div>
               <DialogFooter className="flex-row gap-2">
-                <Button variant="outline" onClick={() => handleDeleteLead(detailLead.id)} className="text-[#ef4444] hover:text-[#ef4444]">
+                <Button variant="outline" onClick={() => setDeleteTarget(detailLead)} className="text-[#ef4444] hover:text-[#ef4444]">
                   <Trash2 className="mr-2 h-4 w-4" /> Delete
                 </Button>
                 {detailLead.status !== "client" && (
@@ -618,6 +624,28 @@ export default function LeadsPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Lead</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#64748b]">
+            Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.name}</span>? This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={() => handleDeleteLead(deleteTarget.id)}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </motion.div>
