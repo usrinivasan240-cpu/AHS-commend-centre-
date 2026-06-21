@@ -91,6 +91,11 @@ function isMapKey(key: string): boolean {
   return k.includes("map") || k.includes("url") || k.includes("link") || k.includes("google") || k.includes("direction");
 }
 
+function openGoogleMaps(address: string) {
+  const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export default function LeadsPage() {
   const { data: leads, loading } = useFirestoreQuery(COLLECTIONS.LEADS);
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
