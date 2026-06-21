@@ -96,6 +96,10 @@ export default function LeadsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteType, setBulkDeleteType] = useState<"all" | "category">("all");
+  const [bulkDeleteCategory, setBulkDeleteCategory] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [newLead, setNewLead] = useState({
     name: "",
@@ -116,6 +120,39 @@ export default function LeadsPage() {
     });
     return [...cats].sort();
   }, [leads]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    leads.forEach((l: any) => {
+      const cat = l.category || l.rawData?.category || "Uncategorized";
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    return counts;
+  }, [leads]);
+
+  const handleDeleteAllLeads = async () => {
+    setBulkDeleting(true);
+    try {
+      const allLeadIds = leads.map((l: any) => l.id);
+      await Promise.all(allLeadIds.map((id: string) => removeLead(id)));
+      setBulkDeleteOpen(false);
+    } catch (err) { console.error(err); }
+    setBulkDeleting(false);
+  };
+
+  const handleDeleteByCategory = async () => {
+    if (!bulkDeleteCategory) return;
+    setBulkDeleting(true);
+    try {
+      const catLeadIds = leads
+        .filter((l: any) => (l.category || l.rawData?.category || "Uncategorized") === bulkDeleteCategory)
+        .map((l: any) => l.id);
+      await Promise.all(catLeadIds.map((id: string) => removeLead(id)));
+      setBulkDeleteOpen(false);
+      setBulkDeleteCategory("");
+    } catch (err) { console.error(err); }
+    setBulkDeleting(false);
+  };
 
   const filteredLeads = useMemo(() => {
     let result = [...leads];
@@ -350,6 +387,15 @@ export default function LeadsPage() {
           <Button onClick={() => setDialogOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" /> Add Lead
           </Button>
+          {leads.length > 0 && (
+            <Button
+              variant="outline"
+              className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 border-[#ef4444]/30"
+              onClick={() => { setBulkDeleteType("all"); setBulkDeleteOpen(true); }}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Remove All ({leads.length})
+            </Button>
+          )}
         </div>
       </motion.div>
 
@@ -413,6 +459,35 @@ export default function LeadsPage() {
           </SelectContent>
         </Select>
       </motion.div>
+
+      {/* Category-wise Remove */}
+      {allCategories.length > 0 && (
+        <motion.div variants={fadeInUp}>
+          <Card className="border-[#1e293b]">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-white">Remove by Category</p>
+                <p className="text-xs text-muted">{allCategories.length} categories · {leads.length} total leads</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {allCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => { setBulkDeleteType("category"); setBulkDeleteCategory(cat); setBulkDeleteOpen(true); }}
+                    className="group flex items-center gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2 text-xs transition-all hover:border-[#ef4444]/50 hover:bg-[#ef4444]/5"
+                  >
+                    <span className="text-[#94a3b8] group-hover:text-white transition-colors">{cat}</span>
+                    <span className="rounded-full bg-[#1e293b] px-2 py-0.5 text-[10px] font-medium text-muted group-hover:bg-[#ef4444]/20 group-hover:text-[#ef4444] transition-colors">
+                      {categoryCounts[cat] || 0}
+                    </span>
+                    <Trash2 className="h-3 w-3 text-transparent group-hover:text-[#ef4444] transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Table */}
       <motion.div variants={fadeInUp}>
@@ -644,6 +719,55 @@ export default function LeadsPage() {
               disabled={deleting}
             >
               {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-[#ef4444]" />
+              {bulkDeleteType === "all" ? "Remove All Leads" : "Remove Category"}
+            </DialogTitle>
+          </DialogHeader>
+          {bulkDeleteType === "all" ? (
+            <div className="space-y-3">
+              <p className="text-sm text-[#64748b]">
+                Are you sure you want to delete <span className="font-bold text-[#ef4444]">{leads.length} lead{leads.length !== 1 ? "s" : ""}</span>? This will permanently remove all leads from your pipeline.
+              </p>
+              <div className="rounded-lg border border-[#ef4444]/20 bg-[#ef4444]/5 p-3">
+                <p className="text-xs text-[#ef4444] font-medium">This action cannot be undone. All lead data, imported fields, and history will be lost.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-[#64748b]">
+                Delete all leads in category <span className="font-bold text-white">"{bulkDeleteCategory}"</span>?
+              </p>
+              <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-[#94a3b8]">{bulkDeleteCategory}</span>
+                  <span className="text-sm font-bold text-[#ef4444]">{categoryCounts[bulkDeleteCategory] || 0} lead{(categoryCounts[bulkDeleteCategory] || 0) !== 1 ? "s" : ""}</span>
+                </div>
+              </div>
+              <p className="text-xs text-[#ef4444]">This action cannot be undone.</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBulkDeleteOpen(false); setBulkDeleteCategory(""); }}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={bulkDeleteType === "all" ? handleDeleteAllLeads : handleDeleteByCategory}
+              disabled={bulkDeleting || (bulkDeleteType === "category" && !bulkDeleteCategory)}
+            >
+              {bulkDeleting ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...</>
+              ) : (
+                <><Trash2 className="mr-2 h-4 w-4" /> {bulkDeleteType === "all" ? `Delete All ${leads.length} Leads` : `Delete ${categoryCounts[bulkDeleteCategory] || 0} Leads`}</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
