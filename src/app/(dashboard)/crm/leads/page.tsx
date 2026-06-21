@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -18,18 +18,15 @@ import {
   Loader2,
   CheckCircle,
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
   UserCheck,
   FileSpreadsheet,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
+  Link2,
 } from "lucide-react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +77,20 @@ function normalizeName(s: string): string {
   return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
 }
 
+function isUrl(val: string): boolean {
+  try {
+    const u = new URL(val);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isMapKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return k.includes("map") || k.includes("url") || k.includes("link") || k.includes("google") || k.includes("direction");
+}
+
 export default function LeadsPage() {
   const { data: leads, loading } = useFirestoreQuery(COLLECTIONS.LEADS);
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
@@ -102,14 +113,7 @@ export default function LeadsPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [newLead, setNewLead] = useState({
-    name: "",
-    company: "",
-    email: "",
-    phone: "",
-    source: "website",
-    category: "",
-    value: "",
-    notes: "",
+    name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "",
   });
 
   const allCategories = useMemo(() => {
@@ -133,8 +137,8 @@ export default function LeadsPage() {
   const handleDeleteAllLeads = async () => {
     setBulkDeleting(true);
     try {
-      const allLeadIds = leads.map((l: any) => l.id);
-      await Promise.all(allLeadIds.map((id: string) => removeLead(id)));
+      const ids = leads.map((l: any) => l.id);
+      await Promise.all(ids.map((id: string) => removeLead(id)));
       setBulkDeleteOpen(false);
     } catch (err) { console.error(err); }
     setBulkDeleting(false);
@@ -144,10 +148,10 @@ export default function LeadsPage() {
     if (!bulkDeleteCategory) return;
     setBulkDeleting(true);
     try {
-      const catLeadIds = leads
+      const ids = leads
         .filter((l: any) => (l.category || l.rawData?.category || "Uncategorized") === bulkDeleteCategory)
         .map((l: any) => l.id);
-      await Promise.all(catLeadIds.map((id: string) => removeLead(id)));
+      await Promise.all(ids.map((id: string) => removeLead(id)));
       setBulkDeleteOpen(false);
       setBulkDeleteCategory("");
     } catch (err) { console.error(err); }
@@ -156,7 +160,6 @@ export default function LeadsPage() {
 
   const filteredLeads = useMemo(() => {
     let result = [...leads];
-
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((l: any) => {
@@ -167,15 +170,8 @@ export default function LeadsPage() {
         return searchable.includes(q);
       });
     }
-
-    if (statusFilter !== "all") {
-      result = result.filter((l: any) => l.status === statusFilter);
-    }
-
-    if (categoryFilter !== "all") {
-      result = result.filter((l: any) => l.category === categoryFilter || l.rawData?.category === categoryFilter);
-    }
-
+    if (statusFilter !== "all") result = result.filter((l: any) => l.status === statusFilter);
+    if (categoryFilter !== "all") result = result.filter((l: any) => l.category === categoryFilter || l.rawData?.category === categoryFilter);
     result.sort((a: any, b: any) => {
       let cmp = 0;
       if (sortField === "name") cmp = (a.name || "").localeCompare(b.name || "");
@@ -184,9 +180,13 @@ export default function LeadsPage() {
       else cmp = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
       return sortDir === "asc" ? cmp : -cmp;
     });
-
     return result;
   }, [leads, search, statusFilter, categoryFilter, sortField, sortDir]);
+
+  const detailIndex = useMemo(() => {
+    if (!detailLead) return -1;
+    return filteredLeads.findIndex((l: any) => l.id === detailLead.id);
+  }, [detailLead, filteredLeads]);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -219,16 +219,10 @@ export default function LeadsPage() {
     if (!newLead.name && !newLead.company) return;
     try {
       await addLead({
-        name: newLead.name || newLead.company,
-        company: newLead.company || newLead.name,
-        email: newLead.email,
-        phone: newLead.phone,
-        source: newLead.source,
-        category: newLead.category,
-        status: "new",
-        value: Number(newLead.value) || 0,
-        notes: newLead.notes,
-        rawData: { ...newLead },
+        name: newLead.name || newLead.company, company: newLead.company || newLead.name,
+        email: newLead.email, phone: newLead.phone, source: newLead.source,
+        category: newLead.category, status: "new", value: Number(newLead.value) || 0,
+        notes: newLead.notes, rawData: { ...newLead },
         createdAt: new Date().toISOString().split("T")[0],
       });
       setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "" });
@@ -241,36 +235,26 @@ export default function LeadsPage() {
     if (!file) return;
     setImporting(true);
     setImportResult(null);
-
     try {
       const XLSX = await import("xlsx");
       const arrayBuffer = await file.arrayBuffer();
       const workbook = XLSX.read(arrayBuffer, { type: "array" });
-
-      let added = 0;
-      let merged = 0;
+      let added = 0, merged = 0;
       const errors: string[] = [];
-
       for (const sheetName of workbook.SheetNames) {
         try {
           const sheet = workbook.Sheets[sheetName];
           const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
           if (rows.length < 2) continue;
-
           const headers = rows[0].map((h: any) => String(h || "").trim());
-
           for (let i = 1; i < rows.length; i++) {
             try {
               const row = rows[i];
               if (!row || row.every((c: any) => !c)) continue;
-
               const rowObj: Record<string, any> = {};
               headers.forEach((h, idx) => {
-                if (h && row[idx] !== undefined && row[idx] !== null && row[idx] !== "") {
-                  rowObj[h] = row[idx];
-                }
+                if (h && row[idx] !== undefined && row[idx] !== null && row[idx] !== "") rowObj[h] = row[idx];
               });
-
               const nameFields = ["name", "business", "shop", "restaurant", "company", "business_name", "shop_name", "restaurant_name"];
               const phoneFields = ["phone", "mobile", "contact", "phone_number", "contact_number", "tel"];
               const emailFields = ["email", "mail", "email_address"];
@@ -278,7 +262,6 @@ export default function LeadsPage() {
               const addressFields = ["address", "location", "addr", "full_address"];
               const reviewFields = ["review", "rating", "feedback", "reviews"];
               const valueFields = ["value", "budget", "amount", "revenue", "deal_value", "price"];
-
               const findField = (candidates: string[]) => {
                 for (const c of candidates) {
                   const found = headers.find(h => h.toLowerCase().includes(c));
@@ -286,7 +269,6 @@ export default function LeadsPage() {
                 }
                 return "";
               };
-
               const leadName = findField(nameFields) || `Lead ${i}`;
               const phone = findField(phoneFields);
               const email = findField(emailFields);
@@ -294,27 +276,21 @@ export default function LeadsPage() {
               const address = findField(addressFields);
               const review = findField(reviewFields);
               const valueStr = findField(valueFields);
-
               const existingLead = leads.find((l: any) => {
-                const ln = normalizeName(l.name);
-                const cn = normalizeName(leadName);
+                const ln = normalizeName(l.name), cn = normalizeName(leadName);
                 if (ln && cn && ln === cn) return true;
                 if (l.phone && phone && l.phone === phone) return true;
                 if (l.email && email && l.email.toLowerCase() === email.toLowerCase()) return true;
                 return false;
               });
-
               if (existingLead) {
                 const mergedData: Record<string, any> = { ...(existingLead.rawData || {}) };
                 for (const [k, v] of Object.entries(rowObj)) {
                   if (v !== undefined && v !== null && v !== "") {
                     const existingVal = mergedData[k];
-                    if (!existingVal || String(existingVal).length < String(v).length) {
-                      mergedData[k] = v;
-                    }
+                    if (!existingVal || String(existingVal).length < String(v).length) mergedData[k] = v;
                   }
                 }
-
                 const updateFields: Record<string, any> = { rawData: mergedData };
                 if (phone && !existingLead.phone) updateFields.phone = phone;
                 if (email && !existingLead.email) updateFields.email = email;
@@ -325,7 +301,6 @@ export default function LeadsPage() {
                   const newVal = parseFloat(String(valueStr).replace(/[^0-9.]/g, ""));
                   if (!isNaN(newVal) && newVal > (existingLead.value || 0)) updateFields.value = newVal;
                 }
-
                 await updateLead(existingLead.id, updateFields);
                 merged++;
               } else {
@@ -333,18 +308,11 @@ export default function LeadsPage() {
                 if (address) allData.address = address;
                 if (review) allData.reviews = [review];
                 if (sheetName) allData._sheetName = sheetName;
-
                 await addLead({
-                  name: leadName,
-                  company: findField(["company", "business", "shop"]) || leadName,
-                  email,
-                  phone,
-                  source: "excel-import",
-                  category: category || "Uncategorized",
-                  status: "new",
-                  value: valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0,
-                  notes: `Imported from ${file.name} (sheet: ${sheetName})`,
-                  rawData: allData,
+                  name: leadName, company: findField(["company", "business", "shop"]) || leadName,
+                  email, phone, source: "excel-import", category: category || "Uncategorized",
+                  status: "new", value: valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0,
+                  notes: `Imported from ${file.name} (sheet: ${sheetName})`, rawData: allData,
                   createdAt: new Date().toISOString().split("T")[0],
                 });
                 added++;
@@ -357,18 +325,70 @@ export default function LeadsPage() {
           errors.push(`Sheet "${sheetName}": ${sheetErr instanceof Error ? sheetErr.message : "read error"}`);
         }
       }
-
       setImportResult({ added, merged, total: added + merged, errors });
     } catch (err) {
       setImportResult({ added: 0, merged: 0, total: 0, errors: [`Failed to read file: ${err instanceof Error ? err.message : "unknown error"}`] });
     }
-
     setImporting(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const handleKeyboard = useCallback((e: KeyboardEvent) => {
+    if (!detailLead) return;
+    if (e.key === "Escape") { setDetailLead(null); return; }
+    if (e.key === "ArrowRight" && detailIndex < filteredLeads.length - 1) {
+      setDetailLead(filteredLeads[detailIndex + 1]);
+    }
+    if (e.key === "ArrowLeft" && detailIndex > 0) {
+      setDetailLead(filteredLeads[detailIndex - 1]);
+    }
+  }, [detailLead, detailIndex, filteredLeads]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [handleKeyboard]);
+
+  const renderValue = (key: string, val: any) => {
+    if (val === null || val === undefined || val === "") return <span>—</span>;
+    if (Array.isArray(val)) return <span>{val.join(", ")}</span>;
+    const str = String(val);
+    if (isUrl(str) && isMapKey(key)) {
+      return (
+        <a
+          href={str}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 text-[#0066ff] hover:text-[#00d9ff] underline underline-offset-2 break-all transition-colors"
+        >
+          <MapPin className="h-3 w-3 shrink-0" />
+          Open in Maps
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </a>
+      );
+    }
+    if (isUrl(str)) {
+      return (
+        <a
+          href={str}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 text-[#0066ff] hover:text-[#00d9ff] underline underline-offset-2 break-all transition-colors"
+        >
+          <Link2 className="h-3 w-3 shrink-0" />
+          {str.length > 60 ? str.substring(0, 60) + "..." : str}
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </a>
+      );
+    }
+    return <span className="break-words">{str}</span>;
+  };
+
   return (
     <motion.div initial="initial" animate="animate" variants={staggerContainer} className="space-y-8">
+      {/* Header */}
       <motion.div variants={fadeInUp} className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white">
@@ -388,11 +408,8 @@ export default function LeadsPage() {
             <Plus className="h-4 w-4" /> Add Lead
           </Button>
           {leads.length > 0 && (
-            <Button
-              variant="outline"
-              className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 border-[#ef4444]/30"
-              onClick={() => { setBulkDeleteType("all"); setBulkDeleteOpen(true); }}
-            >
+            <Button variant="outline" className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 border-[#ef4444]/30"
+              onClick={() => { setBulkDeleteType("all"); setBulkDeleteOpen(true); }}>
               <Trash2 className="mr-2 h-4 w-4" /> Remove All ({leads.length})
             </Button>
           )}
@@ -406,15 +423,9 @@ export default function LeadsPage() {
             <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  {importResult.errors.length > 0 ? (
-                    <AlertTriangle className="h-5 w-5 text-[#f59e0b]" />
-                  ) : (
-                    <CheckCircle className="h-5 w-5 text-[#10b981]" />
-                  )}
+                  {importResult.errors.length > 0 ? <AlertTriangle className="h-5 w-5 text-[#f59e0b]" /> : <CheckCircle className="h-5 w-5 text-[#10b981]" />}
                   <div>
-                    <p className="text-sm font-medium text-white">
-                      Import Complete: {importResult.added} new, {importResult.merged} merged ({importResult.total} total)
-                    </p>
+                    <p className="text-sm font-medium text-white">Import Complete: {importResult.added} new, {importResult.merged} merged ({importResult.total} total)</p>
                     {importResult.errors.length > 0 && (
                       <p className="text-xs text-[#f59e0b] mt-1">
                         {importResult.errors.length} warnings: {importResult.errors.slice(0, 3).join("; ")}
@@ -453,9 +464,7 @@ export default function LeadsPage() {
           <SelectTrigger className="w-[160px]"><Building2 className="mr-2 h-3 w-3" /><SelectValue placeholder="Category" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Categories</SelectItem>
-            {allCategories.map((cat) => (
-              <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-            ))}
+            {allCategories.map((cat) => (<SelectItem key={cat} value={cat}>{cat}</SelectItem>))}
           </SelectContent>
         </Select>
       </motion.div>
@@ -471,15 +480,11 @@ export default function LeadsPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {allCategories.map((cat) => (
-                  <button
-                    key={cat}
+                  <button key={cat}
                     onClick={() => { setBulkDeleteType("category"); setBulkDeleteCategory(cat); setBulkDeleteOpen(true); }}
-                    className="group flex items-center gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2 text-xs transition-all hover:border-[#ef4444]/50 hover:bg-[#ef4444]/5"
-                  >
+                    className="group flex items-center gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2 text-xs transition-all hover:border-[#ef4444]/50 hover:bg-[#ef4444]/5">
                     <span className="text-[#94a3b8] group-hover:text-white transition-colors">{cat}</span>
-                    <span className="rounded-full bg-[#1e293b] px-2 py-0.5 text-[10px] font-medium text-muted group-hover:bg-[#ef4444]/20 group-hover:text-[#ef4444] transition-colors">
-                      {categoryCounts[cat] || 0}
-                    </span>
+                    <span className="rounded-full bg-[#1e293b] px-2 py-0.5 text-[10px] font-medium text-muted group-hover:bg-[#ef4444]/20 group-hover:text-[#ef4444] transition-colors">{categoryCounts[cat] || 0}</span>
                     <Trash2 className="h-3 w-3 text-transparent group-hover:text-[#ef4444] transition-colors" />
                   </button>
                 ))}
@@ -498,26 +503,18 @@ export default function LeadsPage() {
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
-                      <button onClick={() => toggleSort("name")} className="flex items-center gap-1 hover:text-white transition-colors">
-                        Name / Company <SortIcon field="name" />
-                      </button>
+                      <button onClick={() => toggleSort("name")} className="flex items-center gap-1 hover:text-white transition-colors">Name / Company <SortIcon field="name" /></button>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Contact</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
-                      <button onClick={() => toggleSort("category")} className="flex items-center gap-1 hover:text-white transition-colors">
-                        Category <SortIcon field="category" />
-                      </button>
+                      <button onClick={() => toggleSort("category")} className="flex items-center gap-1 hover:text-white transition-colors">Category <SortIcon field="category" /></button>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
-                      <button onClick={() => toggleSort("value")} className="flex items-center gap-1 hover:text-white transition-colors">
-                        Value <SortIcon field="value" />
-                      </button>
+                      <button onClick={() => toggleSort("value")} className="flex items-center gap-1 hover:text-white transition-colors">Value <SortIcon field="value" /></button>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
-                      <button onClick={() => toggleSort("createdAt")} className="flex items-center gap-1 hover:text-white transition-colors">
-                        Created <SortIcon field="createdAt" />
-                      </button>
+                      <button onClick={() => toggleSort("createdAt")} className="flex items-center gap-1 hover:text-white transition-colors">Created <SortIcon field="createdAt" /></button>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Actions</th>
                   </tr>
@@ -525,7 +522,8 @@ export default function LeadsPage() {
                 <tbody className="divide-y divide-border/50">
                   <AnimatePresence>
                     {filteredLeads.map((lead: any) => (
-                      <motion.tr key={lead.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="hover:bg-card-hover/50 transition-colors cursor-pointer" onClick={() => setDetailLead(lead)}>
+                      <motion.tr key={lead.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="hover:bg-card-hover/50 transition-colors cursor-pointer" onClick={() => setDetailLead(lead)}>
                         <td className="px-6 py-4">
                           <div>
                             <p className="font-medium text-white">{lead.name}</p>
@@ -542,14 +540,10 @@ export default function LeadsPage() {
                             {!lead.phone && !lead.email && <span>—</span>}
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <Badge variant="outline" className="text-[10px]">{lead.category || lead.rawData?.category || "—"}</Badge>
-                        </td>
+                        <td className="px-6 py-4"><Badge variant="outline" className="text-[10px]">{lead.category || lead.rawData?.category || "—"}</Badge></td>
                         <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
                           <Select value={lead.status} onValueChange={(v) => updateStatus(lead.id, v)}>
-                            <SelectTrigger className="h-8 w-auto min-w-[100px] text-[10px] border-transparent bg-transparent hover:border-border">
-                              <SelectValue />
-                            </SelectTrigger>
+                            <SelectTrigger className="h-8 w-auto min-w-[100px] text-[10px] border-transparent bg-transparent hover:border-border"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="new">New</SelectItem>
                               <SelectItem value="contacted">Contacted</SelectItem>
@@ -561,12 +555,8 @@ export default function LeadsPage() {
                             </SelectContent>
                           </Select>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="font-semibold text-emerald-400">{formatCurrency(lead.value)}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-sm text-muted">{formatDate(lead.createdAt)}</span>
-                        </td>
+                        <td className="px-6 py-4"><span className="font-semibold text-emerald-400">{formatCurrency(lead.value)}</span></td>
+                        <td className="px-6 py-4"><span className="text-sm text-muted">{formatDate(lead.createdAt)}</span></td>
                         <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
                             {lead.status !== "client" && (
@@ -634,90 +624,146 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Detail Dialog */}
-      <Dialog open={!!detailLead} onOpenChange={(open) => !open && setDetailLead(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {detailLead && (
-            <>
-              <DialogHeader>
-                <div className="flex items-center justify-between">
-                  <DialogTitle className="text-xl">{detailLead.name}</DialogTitle>
-                  <Badge variant={statusVariant[detailLead.status] || "default"} className="capitalize">{detailLead.status}</Badge>
+      {/* Full-Screen Detail Overlay */}
+      <AnimatePresence>
+        {detailLead && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col bg-[#050816]"
+          >
+            {/* Top Bar */}
+            <div className="flex items-center justify-between border-b border-[#1e293b] bg-[#0a0f1e] px-6 py-3">
+              <div className="flex items-center gap-4">
+                <button onClick={() => setDetailLead(null)} className="rounded-lg p-2 text-muted hover:bg-[#1e293b] hover:text-white transition-colors">
+                  <X className="h-5 w-5" />
+                </button>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">{detailLead.name}</h2>
+                  <p className="text-xs text-muted">{detailLead.company} · {detailIndex + 1} of {filteredLeads.length}</p>
                 </div>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div><span className="text-muted">Company:</span><p className="text-white font-medium">{detailLead.company}</p></div>
-                  <div><span className="text-muted">Category:</span><p className="text-white font-medium">{detailLead.category || detailLead.rawData?.category || "—"}</p></div>
-                  <div><span className="text-muted">Phone:</span><p className="text-white font-medium">{detailLead.phone || "—"}</p></div>
-                  <div><span className="text-muted">Email:</span><p className="text-white font-medium">{detailLead.email || "—"}</p></div>
-                  <div><span className="text-muted">Value:</span><p className="text-white font-medium">{formatCurrency(detailLead.value)}</p></div>
-                  <div><span className="text-muted">Source:</span><p className="text-white font-medium capitalize">{(detailLead.source || "").replace(/-/g, " ")}</p></div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant={statusVariant[detailLead.status] || "default"} className="capitalize">{detailLead.status}</Badge>
+                <div className="flex items-center gap-1 ml-2">
+                  <Button variant="outline" size="sm" disabled={detailIndex <= 0} onClick={() => setDetailLead(filteredLeads[detailIndex - 1])}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={detailIndex >= filteredLeads.length - 1} onClick={() => setDetailLead(filteredLeads[detailIndex + 1])}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="mx-auto max-w-4xl space-y-6">
+                {/* Main Info Grid */}
+                <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
+                  <InfoCard label="Company" value={detailLead.company} />
+                  <InfoCard label="Category" value={detailLead.category || detailLead.rawData?.category || "—"} />
+                  <InfoCard label="Phone" value={detailLead.phone || "—"} icon={detailLead.phone ? <Phone className="h-3.5 w-3.5" /> : undefined}
+                    href={detailLead.phone ? `tel:${detailLead.phone}` : undefined} />
+                  <InfoCard label="Email" value={detailLead.email || "—"} icon={detailLead.email ? <Mail className="h-3.5 w-3.5" /> : undefined}
+                    href={detailLead.email ? `mailto:${detailLead.email}` : undefined} />
+                  <InfoCard label="Value" value={formatCurrency(detailLead.value)} valueClass="text-emerald-400" />
+                  <InfoCard label="Source" value={(detailLead.source || "").replace(/-/g, " ")} valueClass="capitalize" />
+                  <InfoCard label="Status" value={detailLead.status} valueClass="capitalize" />
+                  <InfoCard label="Created" value={formatDate(detailLead.createdAt)} />
                 </div>
 
-                {detailLead.rawData && Object.keys(detailLead.rawData).length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-muted mb-2">All Imported Data ({Object.keys(detailLead.rawData).length} fields)</p>
-                    <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3 max-h-[300px] overflow-y-auto">
-                      <div className="space-y-1">
-                        {Object.entries(detailLead.rawData).filter(([k]) => !k.startsWith("_")).map(([key, val]) => (
-                          <div key={key} className="flex justify-between text-xs py-1 border-b border-[#1e293b] last:border-0">
-                            <span className="text-[#64748b] font-medium">{key}</span>
-                            <span className="text-white text-right max-w-[60%] break-words">
-                              {Array.isArray(val) ? val.join(", ") : String(val || "—")}
-                            </span>
+                {/* Address with Google Maps */}
+                {detailLead.rawData?.address && (
+                  <Card className="border-[#1e293b] bg-[#0a0f1e]">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <MapPin className="h-4 w-4 text-[#0066ff]" />
+                            <span className="text-xs font-medium text-muted uppercase">Address</span>
                           </div>
+                          <p className="text-sm text-white">{detailLead.rawData.address}</p>
+                        </div>
+                        <button
+                          onClick={() => openGoogleMaps(detailLead.rawData.address)}
+                          className="shrink-0 flex items-center gap-2 rounded-lg border border-[#0066ff]/30 bg-[#0066ff]/10 px-4 py-2 text-sm text-[#0066ff] hover:bg-[#0066ff]/20 transition-colors"
+                        >
+                          <MapPin className="h-4 w-4" />
+                          Open in Google Maps
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Reviews */}
+                {detailLead.rawData?.reviews && detailLead.rawData.reviews.length > 0 && (
+                  <Card className="border-[#1e293b] bg-[#0a0f1e]">
+                    <CardContent className="p-4">
+                      <p className="text-xs font-medium text-muted uppercase mb-3">Reviews ({detailLead.rawData.reviews.length})</p>
+                      <div className="space-y-2">
+                        {detailLead.rawData.reviews.map((r: string, i: number) => (
+                          <p key={i} className="text-sm text-white bg-[#0f172a] rounded-lg p-3 border border-[#1e293b]">"{r}"</p>
                         ))}
                       </div>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 )}
 
-                {detailLead.rawData?.address && (
-                  <div><span className="text-sm text-muted">Address:</span><p className="text-sm text-white">{detailLead.rawData.address}</p></div>
+                {/* All Imported Data */}
+                {detailLead.rawData && Object.keys(detailLead.rawData).length > 0 && (
+                  <Card className="border-[#1e293b] bg-[#0a0f1e]">
+                    <CardContent className="p-4">
+                      <p className="text-xs font-medium text-muted uppercase mb-3">All Imported Data ({Object.keys(detailLead.rawData).filter(k => !k.startsWith("_")).length} fields)</p>
+                      <div className="rounded-lg border border-[#1e293b] bg-[#050816] overflow-hidden">
+                        <div className="divide-y divide-[#1e293b]">
+                          {Object.entries(detailLead.rawData)
+                            .filter(([k]) => !k.startsWith("_"))
+                            .map(([key, val]) => (
+                              <div key={key} className="flex items-start justify-between gap-4 px-4 py-3 hover:bg-[#0a0f1e] transition-colors">
+                                <span className="text-xs font-medium text-[#64748b] shrink-0 min-w-[120px]">{key}</span>
+                                <span className="text-sm text-white text-right flex-1">
+                                  {renderValue(key, val)}
+                                </span>
+                              </div>
+                            ))
+                          }
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
-                {detailLead.rawData?.reviews && detailLead.rawData.reviews.length > 0 && (
-                  <div>
-                    <span className="text-sm text-muted">Reviews ({detailLead.rawData.reviews.length}):</span>
-                    <div className="space-y-1 mt-1">
-                      {detailLead.rawData.reviews.map((r: string, i: number) => (
-                        <p key={i} className="text-xs text-white bg-[#0a0f1e] rounded p-2">"{r}"</p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <DialogFooter className="flex-row gap-2">
-                <Button variant="outline" onClick={() => setDeleteTarget(detailLead)} className="text-[#ef4444] hover:text-[#ef4444]">
-                  <Trash2 className="mr-2 h-4 w-4" /> Delete
-                </Button>
-                {detailLead.status !== "client" && (
-                  <Button onClick={() => handleConvertToClient(detailLead)} className="bg-[#10b981] hover:bg-[#059669] text-white">
-                    <UserCheck className="mr-2 h-4 w-4" /> Convert to Client
+
+                {/* Action Buttons */}
+                <div className="flex items-center justify-between border-t border-[#1e293b] pt-4">
+                  <Button variant="outline" onClick={() => { setDeleteTarget(detailLead); }} className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 border-[#ef4444]/30">
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete Lead
                   </Button>
-                )}
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+                  {detailLead.status !== "client" && (
+                    <Button onClick={() => handleConvertToClient(detailLead)} className="bg-[#10b981] hover:bg-[#059669] text-white">
+                      <UserCheck className="mr-2 h-4 w-4" /> Convert to Client
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="border-[#1e293b] bg-[#0f172a]">
-          <DialogHeader>
-            <DialogTitle className="text-white">Delete Lead</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="text-white">Delete Lead</DialogTitle></DialogHeader>
           <p className="text-sm text-[#64748b]">
             Are you sure you want to delete <span className="font-semibold text-white">{deleteTarget?.name}</span>? This action cannot be undone.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button
-              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
-              onClick={() => handleDeleteLead(deleteTarget.id)}
-              disabled={deleting}
-            >
+            <Button className="bg-[#ef4444] hover:bg-[#dc2626] text-white" onClick={() => handleDeleteLead(deleteTarget.id)} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
@@ -736,42 +782,54 @@ export default function LeadsPage() {
           {bulkDeleteType === "all" ? (
             <div className="space-y-3">
               <p className="text-sm text-[#64748b]">
-                Are you sure you want to delete <span className="font-bold text-[#ef4444]">{leads.length} lead{leads.length !== 1 ? "s" : ""}</span>? This will permanently remove all leads from your pipeline.
+                Are you sure you want to delete <span className="font-bold text-[#ef4444]">{leads.length} lead{leads.length !== 1 ? "s" : ""}</span>?
               </p>
               <div className="rounded-lg border border-[#ef4444]/20 bg-[#ef4444]/5 p-3">
-                <p className="text-xs text-[#ef4444] font-medium">This action cannot be undone. All lead data, imported fields, and history will be lost.</p>
+                <p className="text-xs text-[#ef4444] font-medium">This action cannot be undone.</p>
               </div>
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-[#64748b]">
-                Delete all leads in category <span className="font-bold text-white">"{bulkDeleteCategory}"</span>?
+                Delete all leads in <span className="font-bold text-white">"{bulkDeleteCategory}"</span>?
               </p>
-              <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-[#94a3b8]">{bulkDeleteCategory}</span>
-                  <span className="text-sm font-bold text-[#ef4444]">{categoryCounts[bulkDeleteCategory] || 0} lead{(categoryCounts[bulkDeleteCategory] || 0) !== 1 ? "s" : ""}</span>
-                </div>
+              <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3 flex items-center justify-between">
+                <span className="text-sm text-[#94a3b8]">{bulkDeleteCategory}</span>
+                <span className="text-sm font-bold text-[#ef4444]">{categoryCounts[bulkDeleteCategory] || 0} leads</span>
               </div>
               <p className="text-xs text-[#ef4444]">This action cannot be undone.</p>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setBulkDeleteOpen(false); setBulkDeleteCategory(""); }}>Cancel</Button>
-            <Button
-              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+            <Button className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
               onClick={bulkDeleteType === "all" ? handleDeleteAllLeads : handleDeleteByCategory}
-              disabled={bulkDeleting || (bulkDeleteType === "category" && !bulkDeleteCategory)}
-            >
-              {bulkDeleting ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...</>
-              ) : (
-                <><Trash2 className="mr-2 h-4 w-4" /> {bulkDeleteType === "all" ? `Delete All ${leads.length} Leads` : `Delete ${categoryCounts[bulkDeleteCategory] || 0} Leads`}</>
-              )}
+              disabled={bulkDeleting || (bulkDeleteType === "category" && !bulkDeleteCategory)}>
+              {bulkDeleting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...</> : <><Trash2 className="mr-2 h-4 w-4" /> Delete</>}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </motion.div>
   );
+}
+
+function InfoCard({ label, value, icon, href, valueClass }: { label: string; value: string; icon?: React.ReactNode; href?: string; valueClass?: string }) {
+  const content = (
+    <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4">
+      <p className="text-xs font-medium text-muted uppercase mb-1">{label}</p>
+      <div className="flex items-center gap-2">
+        {icon && <span className="text-muted">{icon}</span>}
+        <p className={cn("text-sm font-medium text-white", valueClass)}>{value || "—"}</p>
+      </div>
+    </div>
+  );
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="block hover:border-[#0066ff]/30 transition-colors">
+        {content}
+      </a>
+    );
+  }
+  return content;
 }
