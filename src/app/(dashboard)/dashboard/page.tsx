@@ -220,7 +220,7 @@ export default function DashboardPage() {
       {/* Welcome Header */}
       <motion.div variants={fadeInUp}>
         <h1 className="text-3xl font-bold tracking-tight text-white">
-          Welcome back, <span className="gradient-text">Arjun</span>
+          Welcome back, <span className="gradient-text">Sri</span>
         </h1>
         <p className="mt-1 text-muted">{currentDate}</p>
       </motion.div>

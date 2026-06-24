@@ -15,7 +15,7 @@ import type {
 } from "@/types";
 
 export const members: User[] = [
-  { id: "1", name: "Arjun Krishnamurthy", email: "arjun@ahs.dev", role: "super-admin", status: "active", performanceScore: 95, joinDate: "2024-01-15", skills: ["Leadership", "Strategy", "Full Stack"], team: "Core" },
+  { id: "1", name: "Sri Admin", email: "sriadmin@ahs.com", role: "super-admin", status: "active", performanceScore: 95, joinDate: "2024-01-15", skills: ["Leadership", "Strategy", "Full Stack"], team: "Core" },
   { id: "2", name: "Priya Venkatesh", email: "priya@ahs.dev", role: "core-admin", status: "active", performanceScore: 88, joinDate: "2024-02-01", skills: ["Project Management", "React", "Node.js"], team: "Core", avatar: "" },
   { id: "3", name: "Karthik Subramanian", email: "karthik@ahs.dev", role: "team-lead", status: "active", performanceScore: 91, joinDate: "2024-03-10", skills: ["React", "TypeScript", "Next.js"], team: "Frontend" },
   { id: "4", name: "Divya Ramachandran", email: "divya@ahs.dev", role: "team-lead", status: "active", performanceScore: 87, joinDate: "2024-03-15", skills: ["Python", "AI/ML", "Data Science"], team: "AI" },

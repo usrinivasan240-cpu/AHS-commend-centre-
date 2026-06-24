@@ -107,8 +107,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
 
   const [profile, setProfile] = useState({
-    name: "Arjun Krishnamurthy",
-    email: "arjun@ahs.dev",
+    name: "Sri Admin",
+    email: "sriadmin@ahs.com",
     role: "Super Admin",
     bio: "Founder & CEO of AHS. Building the future of startup operations.",
   });

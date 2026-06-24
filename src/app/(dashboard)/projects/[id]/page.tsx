@@ -84,7 +84,7 @@ const milestones = [
 ];
 
 const mockFiles = [
-  { name: "PRD_v2.pdf", size: "2.4 MB", uploadedBy: "Arjun Krishnamurthy", date: "2024-06-01", type: "pdf" },
+  { name: "PRD_v2.pdf", size: "2.4 MB", uploadedBy: "Sri Admin", date: "2024-06-01", type: "pdf" },
   { name: "Figma_Designs.fig", size: "18.7 MB", uploadedBy: "Meera Sharma", date: "2024-06-10", type: "fig" },
   { name: "Architecture_Diagram.png", size: "1.1 MB", uploadedBy: "Vikram Rajesh", date: "2024-06-12", type: "image" },
   { name: "API_Specification.yaml", size: "45 KB", uploadedBy: "Adithya Ravi", date: "2024-06-15", type: "yaml" },
