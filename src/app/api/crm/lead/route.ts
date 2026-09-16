@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { COLLECTIONS } from "@/lib/firebase/types";
 
-function dbOrThrow() {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+async function dbOrThrow() {
   try {
+    const { getAdminDb } = await import("@/lib/firebase/admin");
     return getAdminDb();
   } catch (e: any) {
     throw new Error(
@@ -12,10 +15,14 @@ function dbOrThrow() {
   }
 }
 
-// GET -> list leads (read fallback when client rules deny)
-export async function GET() {
+// GET -> list leads (read fallback when client rules deny).
+// No query param -> list; ?ping=1 -> health check { ok:true }.
+export async function GET(req: NextRequest) {
+  if (new URL(req.url).searchParams.get("ping") === "1") {
+    return NextResponse.json({ ok: true, route: "crm/lead" });
+  }
   try {
-    const db = dbOrThrow();
+    const db = await dbOrThrow();
     const snap = await db.collection(COLLECTIONS.LEADS).orderBy("createdAt", "desc").limit(2000).get()
       .catch(async () => await db.collection(COLLECTIONS.LEADS).limit(2000).get());
     const leads = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
@@ -28,7 +35,7 @@ export async function GET() {
 // POST -> create one lead { lead }
 export async function POST(req: NextRequest) {
   try {
-    const db = dbOrThrow();
+    const db = await dbOrThrow();
     const body = await req.json();
     if (body?.ids && Array.isArray(body.ids)) {
       // bulk delete via POST fallback (some clients avoid DELETE body)
@@ -53,7 +60,7 @@ export async function POST(req: NextRequest) {
 // PATCH -> update one { id, fields } or bulk { ids, fields }
 export async function PATCH(req: NextRequest) {
   try {
-    const db = dbOrThrow();
+    const db = await dbOrThrow();
     const body = await req.json();
     const fields = body?.fields || {};
     const targets: string[] = body?.id ? [body.id] : Array.isArray(body?.ids) ? body.ids : [];
@@ -72,7 +79,7 @@ export async function PATCH(req: NextRequest) {
 // DELETE -> ?id= or { id } or { ids: [] }
 export async function DELETE(req: NextRequest) {
   try {
-    const db = dbOrThrow();
+    const db = await dbOrThrow();
     const urlId = new URL(req.url).searchParams.get("id");
     let ids: string[] = urlId ? [urlId] : [];
     try {

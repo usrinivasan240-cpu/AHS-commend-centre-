@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { COLLECTIONS } from "@/lib/firebase/types";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// Health check: GET /api/crm/import -> { ok:true } proves route is deployed
+export async function GET() {
+  return NextResponse.json({ ok: true, route: "crm/import" });
+}
 
 type ImportItem = {
   lead: Record<string, any>;
@@ -24,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     let db;
     try {
+      const { getAdminDb } = await import("@/lib/firebase/admin");
       db = getAdminDb();
     } catch (e: any) {
       return NextResponse.json(
