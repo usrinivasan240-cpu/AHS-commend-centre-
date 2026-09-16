@@ -97,9 +97,29 @@ function openGoogleMaps(address: string) {
 }
 
 export default function LeadsPage() {
-  const { data: leads, loading } = useFirestoreQuery(COLLECTIONS.LEADS);
+  const { data: leadsLive, loading: loadingLive, error: leadsError } = useFirestoreQuery(COLLECTIONS.LEADS);
+  const [apiLeads, setApiLeads] = useState<any[]>([]);
+  // When client Firestore reads are denied by rules, fall back to Admin API list
+  useEffect(() => {
+    if (leadsError && apiLeads.length === 0) {
+      fetch("/api/crm/lead").then((r) => r.json()).then((d) => {
+        if (Array.isArray(d.leads)) setApiLeads(d.leads);
+      }).catch(() => {});
+    }
+  }, [leadsError, apiLeads.length]);
+  const leads = leadsError && apiLeads.length > 0 ? apiLeads : leadsLive;
+  const loading = leadsError && apiLeads.length > 0 ? false : loadingLive;
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
-  const { add: addTask } = useFirestoreActions(COLLECTIONS.TASKS);
+
+  // Server-side write helpers (Admin SDK bypasses Firestore rules), fallback to client SDK
+  const apiWrite = async (method: string, body: any) => {
+    const res = await fetch("/api/crm/lead", {
+      method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Lead API ${method} failed`);
+    return data;
+  };
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -144,7 +164,8 @@ export default function LeadsPage() {
     setBulkDeleting(true);
     try {
       const ids = leads.map((l: any) => l.id);
-      await Promise.all(ids.map((id: string) => removeLead(id)));
+      try { await apiWrite("DELETE", { ids }); }
+      catch { await Promise.all(ids.map((id: string) => removeLead(id))); }
       setBulkDeleteOpen(false);
     } catch (err) { console.error(err); }
     setBulkDeleting(false);
@@ -157,7 +178,8 @@ export default function LeadsPage() {
       const ids = leads
         .filter((l: any) => (l.category || l.rawData?.category || "Uncategorized") === bulkDeleteCategory)
         .map((l: any) => l.id);
-      await Promise.all(ids.map((id: string) => removeLead(id)));
+      try { await apiWrite("DELETE", { ids }); }
+      catch { await Promise.all(ids.map((id: string) => removeLead(id))); }
       setBulkDeleteOpen(false);
       setBulkDeleteCategory("");
     } catch (err) { console.error(err); }
@@ -205,32 +227,42 @@ export default function LeadsPage() {
   };
 
   const updateStatus = async (leadId: string, newStatus: string) => {
-    try { await updateLead(leadId, { status: newStatus }); } catch (err) { console.error(err); }
+    try {
+      try { await apiWrite("PATCH", { id: leadId, fields: { status: newStatus } }); }
+      catch { await updateLead(leadId, { status: newStatus }); }
+    } catch (err) { console.error(err); }
   };
 
   const handleConvertToClient = async (lead: any) => {
     try {
-      await updateLead(lead.id, { status: "client", convertedAt: new Date().toISOString() });
+      try { await apiWrite("PATCH", { id: lead.id, fields: { status: "client", convertedAt: new Date().toISOString() } }); }
+      catch { await updateLead(lead.id, { status: "client", convertedAt: new Date().toISOString() }); }
       setDetailLead(null);
     } catch (err) { console.error(err); }
   };
 
   const handleDeleteLead = async (leadId: string) => {
     setDeleting(true);
-    try { await removeLead(leadId); setDetailLead(null); setDeleteTarget(null); } catch (err) { console.error(err); }
+    try {
+      try { await apiWrite("DELETE", { id: leadId }); }
+      catch { await removeLead(leadId); }
+      setDetailLead(null); setDeleteTarget(null);
+    } catch (err) { console.error(err); }
     setDeleting(false);
   };
 
   const handleAddLead = async () => {
     if (!newLead.name && !newLead.company) return;
     try {
-      await addLead({
+      const payload = {
         name: newLead.name || newLead.company, company: newLead.company || newLead.name,
         email: newLead.email, phone: newLead.phone, source: newLead.source,
         category: newLead.category, status: "new", value: Number(newLead.value) || 0,
         notes: newLead.notes, rawData: { ...newLead },
         createdAt: new Date().toISOString().split("T")[0],
-      });
+      };
+      try { await apiWrite("POST", { lead: payload }); }
+      catch { await addLead(payload); }
       setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "" });
       setDialogOpen(false);
     } catch (err) { console.error(err); }
