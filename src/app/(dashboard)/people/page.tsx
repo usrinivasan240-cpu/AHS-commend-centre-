@@ -83,6 +83,7 @@ const roleLabels: Record<Role, string> = {
   developer: "Developer",
   intern: "Intern",
   trainee: "Trainee",
+  marketing: "Marketing",
   client: "Client",
 };
 
@@ -93,6 +94,7 @@ const roleBadgeVariant: Record<Role, "default" | "secondary" | "success" | "warn
   developer: "success",
   intern: "warning",
   trainee: "secondary",
+  marketing: "info",
   client: "outline",
 };
 

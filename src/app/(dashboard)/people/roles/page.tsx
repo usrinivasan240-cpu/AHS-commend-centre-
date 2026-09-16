@@ -12,6 +12,7 @@ import {
   UserCheck,
   Briefcase,
   Eye,
+  Megaphone,
   Loader2,
   Save,
 } from "lucide-react";
@@ -62,6 +63,7 @@ const defaultRoles = [
   { slug: "intern", name: "Intern", icon: Briefcase, color: "text-warning", bgColor: "bg-warning/10", description: "Learning-focused with course and assessment access." },
   { slug: "trainee", name: "Trainee", icon: GraduationCap, color: "text-muted-light", bgColor: "bg-muted/10", description: "Entry-level role focused on learning." },
   { slug: "client", name: "Client", icon: Eye, color: "text-secondary", bgColor: "bg-secondary/10", description: "External client access for project viewing." },
+  { slug: "marketing", name: "Marketing", icon: Megaphone, color: "text-info", bgColor: "bg-info/10", description: "Marketing access for leads, clients, and campaigns." },
 ];
 
 export default function RolesPage() {
@@ -86,6 +88,7 @@ export default function RolesPage() {
         "intern": ["View Dashboard", "View Reports", "Manage Courses", "View AI Insights"],
         "trainee": ["View Dashboard", "View Reports", "Manage Courses"],
         "client": ["View Dashboard", "View Reports"],
+        "marketing": ["View Dashboard", "Manage Leads", "Manage Clients", "View Reports", "View AI Insights", "Manage Notifications"],
       };
       setRolePermissions(defaults);
       setLoaded(true);

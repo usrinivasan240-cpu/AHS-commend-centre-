@@ -25,6 +25,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   "intern": ["View Dashboard", "View Reports", "Manage Courses", "View AI Insights"],
   "trainee": ["View Dashboard", "View Reports", "Manage Courses"],
   "client": ["View Dashboard", "View Reports"],
+  "marketing": ["View Dashboard", "Manage Leads", "Manage Clients", "View Reports", "View AI Insights", "Manage Notifications"],
 };
 
 export function getRolePermissions(role: string): string[] {
