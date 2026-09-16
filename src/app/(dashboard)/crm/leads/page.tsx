@@ -110,6 +110,7 @@ export default function LeadsPage() {
   const leads = leadsError && apiLeads.length > 0 ? apiLeads : leadsLive;
   const loading = leadsError && apiLeads.length > 0 ? false : loadingLive;
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
+  const { add: addTask } = useFirestoreActions(COLLECTIONS.TASKS);
 
   // Server-side write helpers (Admin SDK bypasses Firestore rules), fallback to client SDK
   const apiWrite = async (method: string, body: any) => {
@@ -430,21 +431,61 @@ export default function LeadsPage() {
         }
       }
       // Server-side import via Admin SDK (bypasses client Firestore rules)
+      // Resilient: detect HTML 404 (route not yet deployed) and fall back to client SDK
       if (items.length > 0) {
+        let apiOk = false;
         try {
           const res = await fetch("/api/crm/import", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items }),
           });
-          const data = await res.json();
+          const text = await res.text();
+          let data: any = {};
+          try { data = JSON.parse(text); }
+          catch {
+            throw new Error(
+              res.status === 404 || text.includes("<!DOCTYPE")
+                ? "Import API route not found on live site (404). Redeploy Vercel from main branch so /api/crm/import exists — falling back to direct write."
+                : "Import API returned non-JSON response — falling back to direct write."
+            );
+          }
           added = data.added || 0; merged = data.merged || 0; tasksCreated = data.tasksCreated || 0;
           if (Array.isArray(data.errors)) errors.push(...data.errors);
           if (!res.ok && added === 0 && merged === 0) {
             errors.unshift("Server import failed — check Vercel env FIREBASE_ADMIN_PRIVATE_KEY / FIREBASE_ADMIN_CLIENT_EMAIL, or local service JSON.");
+          } else {
+            apiOk = res.ok;
           }
         } catch (apiErr) {
           errors.push(`Import API unreachable: ${apiErr instanceof Error ? apiErr.message : String(apiErr)}`);
+        }
+        // Client-SDK fallback: direct Firestore writes (works when rules allow / localhost)
+        if (!apiOk) {
+          let fbAdded = 0, fbMerged = 0, fbTasks = 0;
+          for (const item of items) {
+            try {
+              const found = leads.find((l: any) => {
+                if (item.mergeKey.name && normalizeName(l.name) === item.mergeKey.name) return true;
+                if (item.mergeKey.phone && String(l.phone || "").trim() === item.mergeKey.phone) return true;
+                if (item.mergeKey.email && String(l.email || "").toLowerCase().trim() === item.mergeKey.email) return true;
+                return false;
+              });
+              let lid: string;
+              if (found) {
+                await updateLead(found.id, { rawData: { ...(found.rawData || {}), ...(item.lead.rawData || {}) }, updatedAt: new Date().toISOString() });
+                lid = found.id; fbMerged++;
+              } else {
+                lid = await addLead({ ...item.lead, updatedAt: new Date().toISOString() });
+                fbAdded++;
+              }
+              try { await addTask({ ...item.task, description: `${item.task.description || ""} | LeadID:${lid}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); fbTasks++; }
+              catch (tErr: any) { errors.push(`${item.rowLabel} task: ${tErr?.message || "task write failed"}`); }
+            } catch (rowErr: any) {
+              errors.push(`${item.rowLabel}: ${rowErr?.message || "write failed"}`);
+            }
+          }
+          added += fbAdded; merged += fbMerged; tasksCreated += fbTasks;
         }
       }
       const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
