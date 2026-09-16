@@ -35,18 +35,11 @@ function getAdminApp(): App {
   return adminApp;
 }
 
-// Lazy getters - don't init at import time (avoids build crash when env missing)
+// NOTE: fully lazy - NEVER init at import time (Vercel has no service JSON,
+// only env vars). Importing this module must never throw.
 export const getAdminDb = () => getFirestore(getAdminApp());
 export const getAdminAuth = () => getAuth(getAdminApp());
 
-// Back-compat eager exports (only if not building)
-let _adminDb: ReturnType<typeof getFirestore> | null = null;
-let _adminAuth: ReturnType<typeof getAuth> | null = null;
-try {
-  _adminDb = getFirestore(getAdminApp());
-  _adminAuth = getAuth(getAdminApp());
-} catch (e) {
-  console.warn("[firebase-admin] init deferred:", (e as Error).message);
-}
-export const adminDb = _adminDb as ReturnType<typeof getFirestore>;
-export const adminAuth = _adminAuth as ReturnType<typeof getAuth>;
+// Back-compat exports: null until first lazy init. Do NOT init here.
+export const adminDb = null as unknown as ReturnType<typeof getFirestore>;
+export const adminAuth = null as unknown as ReturnType<typeof getAuth>;
