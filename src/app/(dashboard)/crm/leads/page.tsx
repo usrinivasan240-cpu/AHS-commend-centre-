@@ -99,6 +99,7 @@ function openGoogleMaps(address: string) {
 export default function LeadsPage() {
   const { data: leads, loading } = useFirestoreQuery(COLLECTIONS.LEADS);
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
+  const { add: addTask } = useFirestoreActions(COLLECTIONS.TASKS);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -241,96 +242,206 @@ export default function LeadsPage() {
     setImporting(true);
     setImportResult(null);
     try {
-      const XLSX = await import("xlsx");
-      const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: "array" });
-      let added = 0, merged = 0;
+      const ext = file.name.split(".").pop()?.toLowerCase() || "";
+      let added = 0, merged = 0, tasksCreated = 0;
       const errors: string[] = [];
-      for (const sheetName of workbook.SheetNames) {
+
+      // helper: parse CSV text into rows
+      const parseCsvText = (text: string): any[][] => {
+        const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
+        return lines.map((line) => {
+          const cells: string[] = [];
+          let cur = "", inQuote = false;
+          for (let j = 0; j < line.length; j++) {
+            const ch = line[j];
+            if (ch === '"') {
+              if (inQuote && line[j + 1] === '"') { cur += '"'; j++; }
+              else inQuote = !inQuote;
+            } else if (ch === "," && !inQuote) { cells.push(cur.trim()); cur = ""; }
+            else cur += ch;
+          }
+          cells.push(cur.trim());
+          return cells.map((c) => c.replace(/^"|"$/g, ""));
+        });
+      };
+
+      // collect rows per sheet: { name, rows }
+      const sheets: { name: string; rows: any[][] }[] = [];
+
+      if (ext === "pdf") {
         try {
+          // try pdfjs-dist first (client), fallback to pdf-parse
+          let pdfText = "";
+          try {
+            const pdfjs: any = await import("pdfjs-dist");
+            const pdfjsLib = pdfjs.default || pdfjs;
+            if (pdfjsLib.GlobalWorkerOptions) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || "4.0.379"}/pdf.worker.min.mjs`;
+            }
+            const buf = await file.arrayBuffer();
+            const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+            const parts: string[] = [];
+            for (let p = 1; p <= Math.min(doc.numPages, 20); p++) {
+              const page = await doc.getPage(p);
+              const content = await page.getTextContent();
+              parts.push(content.items.map((it: any) => it.str).join(" "));
+            }
+            pdfText = parts.join("\n");
+          } catch {
+            const pdfParseMod: any = await import("pdf-parse");
+            const pdfParse = pdfParseMod.default || pdfParseMod;
+            const buf = await file.arrayBuffer();
+            const data = await pdfParse(Buffer.from(buf));
+            pdfText = data.text || "";
+          }
+          // attempt CSV-like parse from PDF text: split lines that look like comma/tab rows, else treat whole text as one task source
+          const pdfLines = pdfText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+          // if PDF looks tabular (commas), parse as CSV rows
+          const looksCsv = pdfLines.some((l) => l.includes(",") && l.split(",").length >= 2);
+          if (looksCsv) {
+            sheets.push({ name: "PDF", rows: parseCsvText(pdfLines.join("\n")) });
+          } else {
+            // single row sheet from PDF free text -> each non-empty line becomes a lead name
+            const singleRows = [["name"], ...pdfLines.slice(0, 200).map((l) => [l])];
+            sheets.push({ name: "PDF", rows: singleRows });
+          }
+        } catch (pdfErr) {
+          throw new Error(`PDF parse failed: ${pdfErr instanceof Error ? pdfErr.message : String(pdfErr)}`);
+        }
+      } else if (ext === "csv") {
+        const text = await file.text();
+        const rows = parseCsvText(text);
+        sheets.push({ name: "Sheet1", rows });
+      } else {
+        const XLSX = await import("xlsx");
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
           const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-          if (rows.length < 2) continue;
-          const headers = rows[0].map((h: any) => String(h || "").trim());
-          for (let i = 1; i < rows.length; i++) {
-            try {
-              const row = rows[i];
-              if (!row || row.every((c: any) => !c)) continue;
-              const rowObj: Record<string, any> = {};
-              headers.forEach((h, idx) => {
-                if (h && row[idx] !== undefined && row[idx] !== null && row[idx] !== "") rowObj[h] = row[idx];
-              });
-              const nameFields = ["name", "business", "shop", "restaurant", "company", "business_name", "shop_name", "restaurant_name"];
-              const phoneFields = ["phone", "mobile", "contact", "phone_number", "contact_number", "tel"];
-              const emailFields = ["email", "mail", "email_address"];
-              const categoryFields = ["category", "type", "segment", "industry", "sector"];
-              const addressFields = ["address", "location", "addr", "full_address"];
-              const reviewFields = ["review", "rating", "feedback", "reviews"];
-              const valueFields = ["value", "budget", "amount", "revenue", "deal_value", "price"];
-              const findField = (candidates: string[]) => {
-                for (const c of candidates) {
-                  const found = headers.find(h => h.toLowerCase().includes(c));
-                  if (found && rowObj[found]) return String(rowObj[found]);
-                }
-                return "";
-              };
-              const leadName = findField(nameFields) || `Lead ${i}`;
-              const phone = findField(phoneFields);
-              const email = findField(emailFields);
-              const category = findField(categoryFields);
-              const address = findField(addressFields);
-              const review = findField(reviewFields);
-              const valueStr = findField(valueFields);
-              const existingLead = leads.find((l: any) => {
-                const ln = normalizeName(l.name), cn = normalizeName(leadName);
-                if (ln && cn && ln === cn) return true;
-                if (l.phone && phone && l.phone === phone) return true;
-                if (l.email && email && l.email.toLowerCase() === email.toLowerCase()) return true;
-                return false;
-              });
-              if (existingLead) {
-                const mergedData: Record<string, any> = { ...(existingLead.rawData || {}) };
-                for (const [k, v] of Object.entries(rowObj)) {
-                  if (v !== undefined && v !== null && v !== "") {
-                    const existingVal = mergedData[k];
-                    if (!existingVal || String(existingVal).length < String(v).length) mergedData[k] = v;
-                  }
-                }
-                const updateFields: Record<string, any> = { rawData: mergedData };
-                if (phone && !existingLead.phone) updateFields.phone = phone;
-                if (email && !existingLead.email) updateFields.email = email;
-                if (category && !existingLead.category) updateFields.category = category;
-                if (address) mergedData.address = address;
-                if (review) mergedData.reviews = [...(existingLead.rawData?.reviews || []), review];
-                if (valueStr) {
-                  const newVal = parseFloat(String(valueStr).replace(/[^0-9.]/g, ""));
-                  if (!isNaN(newVal) && newVal > (existingLead.value || 0)) updateFields.value = newVal;
-                }
-                await updateLead(existingLead.id, updateFields);
-                merged++;
-              } else {
-                const allData: Record<string, any> = { ...rowObj };
-                if (address) allData.address = address;
-                if (review) allData.reviews = [review];
-                if (sheetName) allData._sheetName = sheetName;
-                await addLead({
-                  name: leadName, company: findField(["company", "business", "shop"]) || leadName,
-                  email, phone, source: "excel-import", category: category || "Uncategorized",
-                  status: "new", value: valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0,
-                  notes: `Imported from ${file.name} (sheet: ${sheetName})`, rawData: allData,
-                  createdAt: new Date().toISOString().split("T")[0],
-                });
-                added++;
-              }
-            } catch (rowErr) {
-              errors.push(`Row ${i + 1} in "${sheetName}": ${rowErr instanceof Error ? rowErr.message : "parse error"}`);
-            }
-          }
-        } catch (sheetErr) {
-          errors.push(`Sheet "${sheetName}": ${sheetErr instanceof Error ? sheetErr.message : "read error"}`);
+          sheets.push({ name: sheetName, rows });
         }
       }
-      setImportResult({ added, merged, total: added + merged, errors });
+
+      for (const { name: sheetName, rows } of sheets) {
+        if (rows.length < 1) continue;
+        // allow single-column PDF case: treat first row as header "name"
+        const headers = rows[0].map((h: any) => String(h || "").trim());
+        const startRow = headers.some((h: string) => h.length > 0) && rows.length >= 2 ? 1 : 0;
+        // if header row is actually data (no header), synthesize
+        const effectiveHeaders = startRow === 0 ? headers.map((_: any, i: number) => `col_${i}`) : headers;
+        const effectiveRows = startRow === 0 ? rows : rows;
+        const dataStart = startRow === 0 ? 0 : 1;
+        if (effectiveRows.length - dataStart < 1) continue;
+        for (let i = dataStart; i < effectiveRows.length; i++) {
+          try {
+            const row = effectiveRows[i];
+            if (!row || row.every((c: any) => c === "" || c === null || c === undefined)) continue;
+            const rowObj: Record<string, any> = {};
+            effectiveHeaders.forEach((h, idx) => {
+              if (h && row[idx] !== undefined && row[idx] !== null && String(row[idx]).trim() !== "") rowObj[h] = row[idx];
+            });
+            if (Object.keys(rowObj).length === 0) continue;
+            const nameFields = ["name", "business", "shop", "restaurant", "company", "business_name", "shop_name", "restaurant_name", "col_0"];
+            const phoneFields = ["phone", "mobile", "contact", "phone_number", "contact_number", "tel"];
+            const emailFields = ["email", "mail", "email_address"];
+            const categoryFields = ["category", "type", "segment", "industry", "sector"];
+            const addressFields = ["address", "location", "addr", "full_address"];
+            const reviewFields = ["review", "rating", "feedback", "reviews"];
+            const valueFields = ["value", "budget", "amount", "revenue", "deal_value", "price"];
+            const findField = (candidates: string[]) => {
+              for (const c of candidates) {
+                const found = effectiveHeaders.find((h: string) => h.toLowerCase().includes(c));
+                if (found && rowObj[found] !== undefined && String(rowObj[found]).trim() !== "") return String(rowObj[found]).trim();
+              }
+              return "";
+            };
+            const leadNameRaw = findField(nameFields);
+            // for PDF free-text single col, use first cell
+            const leadName = leadNameRaw || String(row[0] || "").trim() || `Lead ${i + 1}`;
+            const phone = findField(phoneFields);
+            const email = findField(emailFields);
+            const category = findField(categoryFields);
+            const address = findField(addressFields);
+            const review = findField(reviewFields);
+            const valueStr = findField(valueFields);
+            const existingLead = leads.find((l: any) => {
+              const ln = normalizeName(l.name), cn = normalizeName(leadName);
+              if (ln && cn && ln === cn) return true;
+              if (l.phone && phone && String(l.phone).trim() === String(phone).trim()) return true;
+              if (l.email && email && String(l.email).toLowerCase().trim() === String(email).toLowerCase().trim()) return true;
+              return false;
+            });
+            let leadId: string | null = null;
+            const dueDateStr = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+            const companyVal = findField(["company", "business", "shop"]) || leadName;
+            if (existingLead) {
+              const mergedData: Record<string, any> = { ...(existingLead.rawData || {}) };
+              for (const [k, v] of Object.entries(rowObj)) {
+                if (v !== undefined && v !== null && String(v).trim() !== "") {
+                  const existingVal = mergedData[k];
+                  if (!existingVal || String(existingVal).length < String(v).length) mergedData[k] = v;
+                }
+              }
+              const updateFields: Record<string, any> = { rawData: mergedData };
+              if (phone && !existingLead.phone) updateFields.phone = phone;
+              if (email && !existingLead.email) updateFields.email = email;
+              if (category && !existingLead.category) updateFields.category = category;
+              if (address) mergedData.address = address;
+              if (review) mergedData.reviews = [...(existingLead.rawData?.reviews || []), review];
+              if (valueStr) {
+                const newVal = parseFloat(String(valueStr).replace(/[^0-9.]/g, ""));
+                if (!isNaN(newVal) && newVal > (existingLead.value || 0)) updateFields.value = newVal;
+              }
+              await updateLead(existingLead.id, updateFields);
+              leadId = existingLead.id;
+              merged++;
+            } else {
+              const allData: Record<string, any> = { ...rowObj };
+              if (address) allData.address = address;
+              if (review) allData.reviews = [review];
+              if (sheetName) allData._sheetName = sheetName;
+              leadId = await addLead({
+                name: leadName, company: companyVal,
+                email, phone, source: ext === "pdf" ? "pdf-import" : ext === "csv" ? "csv-import" : "excel-import", category: category || "Uncategorized",
+                status: "new", value: valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0,
+                notes: `Imported from ${file.name} (sheet: ${sheetName}, row: ${i + 1})`, rawData: allData,
+                createdAt: new Date().toISOString().split("T")[0],
+              });
+              added++;
+            }
+            // always create a Task for the system regardless of format
+            try {
+              const taskTitle = category ? `Follow up: ${leadName} [${category}]` : `Follow up: ${leadName}`;
+              const taskPriority = valueStr && parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) > 50000 ? "high" as const : "medium" as const;
+              await addTask({
+                projectId: "crm-import",
+                title: taskTitle,
+                status: "todo",
+                priority: taskPriority,
+                assigneeId: "",
+                dueDate: dueDateStr,
+                description: `Lead: ${leadName} (${companyVal}) | Phone: ${phone || "—"} | Email: ${email || "—"} | Category: ${category || "Uncategorized"} | Value: ${valueStr || "0"} | Source: ${file.name} sheet:${sheetName} row:${i + 1}${leadId ? ` | LeadID:${leadId}` : ""}${address ? ` | Addr:${address}` : ""}`,
+              });
+              tasksCreated++;
+            } catch (taskErr) {
+              errors.push(`Row ${i + 1} "${sheetName}" task: ${taskErr instanceof Error ? taskErr.message : String(taskErr)}`);
+            }
+          } catch (rowErr) {
+            errors.push(`Row ${i + 1} in "${sheetName}": ${rowErr instanceof Error ? rowErr.message : "parse error"}`);
+          }
+        }
+      }
+      const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
+      if (added === 0 && merged === 0 && errors.length > 0 && errors.some((e) => e.includes("Missing or insufficient permissions") || e.includes("permission"))) {
+        errors.unshift("Firestore permission denied: deploy firestore.rules (firebase deploy --only firestore:rules) or set Firestore to allow writes. Run: firebase deploy --only firestore:rules --project ptpm-bf265");
+      }
+      setImportResult({ added, merged, total: added + merged, errors: errors.length ? [...errors, `Tasks: ${tasksCreated}${suffix ? "" : ""}`] : [] } as any);
+      // surface tasks count in UI even when no errors: push as synthetic error-like info
+      if (errors.length === 0 && tasksCreated > 0) {
+        setImportResult({ added, merged, total: added + merged, errors: [`${tasksCreated} task(s) auto-created for system${suffix}`] } as any);
+        setTimeout(() => setImportResult((prev) => prev ? { ...prev, errors: [] } : prev), 6000);
+      }
     } catch (err) {
       setImportResult({ added: 0, merged: 0, total: 0, errors: [`Failed to read file: ${err instanceof Error ? err.message : "unknown error"}`] });
     }
@@ -404,10 +515,10 @@ export default function LeadsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportExcel} />
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.pdf" className="hidden" onChange={handleImportExcel} />
           <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing}>
             {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-            {importing ? "Importing..." : "Import Excel"}
+            {importing ? "Importing..." : "Import File (Excel/CSV/PDF → Tasks)"}
           </Button>
           <Button onClick={() => setDialogOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" /> Add Lead
