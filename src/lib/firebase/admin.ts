@@ -1,6 +1,9 @@
 ﻿import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { getAuth } from "firebase-admin/auth";
+// NOTE: firebase-admin/auth is intentionally NOT imported here.
+// It pulls jwks-rsa -> jose (ESM-only), which crashes at runtime under
+// Next.js/Vercel with: "require() of ES Module jose/dist/webapi/index.js
+// not supported". No route uses Admin Auth today (Firestore only).
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
@@ -38,8 +41,13 @@ function getAdminApp(): App {
 // NOTE: fully lazy - NEVER init at import time (Vercel has no service JSON,
 // only env vars). Importing this module must never throw.
 export const getAdminDb = () => getFirestore(getAdminApp());
-export const getAdminAuth = () => getAuth(getAdminApp());
 
 // Back-compat exports: null until first lazy init. Do NOT init here.
 export const adminDb = null as unknown as ReturnType<typeof getFirestore>;
-export const adminAuth = null as unknown as ReturnType<typeof getAuth>;
+// getAdminAuth/adminAuth removed: firebase-admin/auth pulls an ESM-only
+// chain (jwks-rsa -> jose) that crashes at runtime on Vercel. Re-add with a
+// dynamic `await import("firebase-admin/auth")` inside the caller if needed.
+export const getAdminAuth = () => {
+  throw new Error("Admin Auth disabled (ESM-only jose crash risk); use dynamic import if needed.");
+};
+export const adminAuth = null as unknown as never;
