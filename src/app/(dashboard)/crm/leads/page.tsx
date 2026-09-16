@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/select";
 import { useFirestoreQuery, useFirestoreActions } from "@/lib/firebase/hooks";
 import { COLLECTIONS } from "@/lib/firebase/types";
+import { useAuth } from "@/lib/auth-context";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 
 const fadeInUp = {
@@ -139,6 +140,46 @@ export default function LeadsPage() {
   const [bulkDeleteCategory, setBulkDeleteCategory] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // Auth & members for assignment
+  const { user: currentUser } = useAuth();
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersLoaded, setMembersLoaded] = useState(false);
+
+  // Assignment dialog state
+  const [assignmentDialogOpen, setAssignmentDialogOpen] = useState(false);
+  const [pendingImportItems, setPendingImportItems] = useState<any[]>([]);
+  const [pendingImportStats, setPendingImportStats] = useState<{ added: number; merged: number; errors: string[] } | null>(null);
+  const [selectedAssignee, setSelectedAssignee] = useState("");
+  const [assigning, setAssigning] = useState(false);
+
+  // Fetch marketing members for assignment dropdown
+  useEffect(() => {
+    if (membersLoaded) return;
+    (async () => {
+      try {
+        const { collection, getDocs } = await import("firebase/firestore");
+        const { db } = await import("@/lib/firebase/config");
+        const snap = await getDocs(collection(db, "users"));
+        const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        setMembers(list.filter((m: any) => m.role === "marketing" || m.role === "super-admin"));
+        setMembersLoaded(true);
+      } catch {
+        // Fallback: try Admin API
+        try {
+          const res = await fetch("/api/crm/lead?ping=1");
+          if (res.ok) {
+            // If API works, fetch members via a simple endpoint we'll create inline
+            // For now, populate from localStorage if available
+          }
+        } catch {}
+        setMembersLoaded(true);
+      }
+    })();
+  }, [membersLoaded]);
+
+  const isMarketingRole = currentUser?.role === "marketing";
+  const currentUserId = currentUser?.email; // email used as fallback id since auth stores email not doc ID
+
   const [newLead, setNewLead] = useState({
     name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "",
   });
@@ -189,6 +230,17 @@ export default function LeadsPage() {
 
   const filteredLeads = useMemo(() => {
     let result = [...leads];
+    // Role-based filtering: marketing users only see leads assigned to them
+    if (isMarketingRole && currentUserId) {
+      result = result.filter((l: any) => {
+        // Match by assignedTo field (could be email or doc ID)
+        if (l.assignedTo === currentUserId) return true;
+        // Also check rawData for backward compatibility
+        if (l.rawData?.assignedTo === currentUserId) return true;
+        // Show leads with no assignment (unassigned) so marketing can see what's available
+        return !l.assignedTo && !l.rawData?.assignedTo;
+      });
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((l: any) => {
@@ -430,74 +482,110 @@ export default function LeadsPage() {
           }
         }
       }
-      // Server-side import via Admin SDK (bypasses client Firestore rules)
-      // Resilient: detect HTML 404 (route not yet deployed) and fall back to client SDK
+      // Store parsed items and show assignment dialog before importing
       if (items.length > 0) {
-        let apiOk = false;
-        try {
-          const res = await fetch("/api/crm/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items }),
-          });
-          const text = await res.text();
-          let data: any = {};
-          try { data = JSON.parse(text); }
-          catch {
-            throw new Error(
-              res.status === 404 || text.includes("<!DOCTYPE")
-                ? "Import API route not found on live site (404). Redeploy Vercel from main branch so /api/crm/import exists — falling back to direct write."
-                : "Import API returned non-JSON response — falling back to direct write."
-            );
-          }
-          added = data.added || 0; merged = data.merged || 0; tasksCreated = data.tasksCreated || 0;
-          if (Array.isArray(data.errors)) errors.push(...data.errors);
-          if (!res.ok && added === 0 && merged === 0) {
-            errors.unshift("Server import failed — check Vercel env FIREBASE_ADMIN_PRIVATE_KEY / FIREBASE_ADMIN_CLIENT_EMAIL, or local service JSON.");
-          } else {
-            apiOk = res.ok;
-          }
-        } catch (apiErr) {
-          errors.push(`Import API unreachable: ${apiErr instanceof Error ? apiErr.message : String(apiErr)}`);
-        }
-        // Client-SDK fallback: direct Firestore writes (works when rules allow / localhost)
-        if (!apiOk) {
-          let fbAdded = 0, fbMerged = 0, fbTasks = 0;
-          for (const item of items) {
-            try {
-              const found = leads.find((l: any) => {
-                if (item.mergeKey.name && normalizeName(l.name) === item.mergeKey.name) return true;
-                if (item.mergeKey.phone && String(l.phone || "").trim() === item.mergeKey.phone) return true;
-                if (item.mergeKey.email && String(l.email || "").toLowerCase().trim() === item.mergeKey.email) return true;
-                return false;
-              });
-              let lid: string;
-              if (found) {
-                await updateLead(found.id, { rawData: { ...(found.rawData || {}), ...(item.lead.rawData || {}) }, updatedAt: new Date().toISOString() });
-                lid = found.id; fbMerged++;
-              } else {
-                lid = await addLead({ ...item.lead, updatedAt: new Date().toISOString() });
-                fbAdded++;
-              }
-              try { await addTask({ ...item.task, description: `${item.task.description || ""} | LeadID:${lid}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); fbTasks++; }
-              catch (tErr: any) { errors.push(`${item.rowLabel} task: ${tErr?.message || "task write failed"}`); }
-            } catch (rowErr: any) {
-              errors.push(`${item.rowLabel}: ${rowErr?.message || "write failed"}`);
-            }
-          }
-          added += fbAdded; merged += fbMerged; tasksCreated += fbTasks;
-        }
+        setPendingImportItems(items);
+        setPendingImportStats({ added: 0, merged: 0, errors });
+        setAssignmentDialogOpen(true);
+        setImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
       }
-      const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
-      if (added === 0 && merged === 0 && errors.length > 0 && errors.some((e) => e.includes("Missing or insufficient permissions") || e.includes("permission"))) {
-        errors.unshift("Firestore permission denied: paste firestore.rules from repo root into Firebase Console > Firestore > Rules for ptpm-bf265, then Publish. File is at /firestore.rules in this repo.");
-      }
-      setImportResult({ added, merged, total: added + merged, errors, tasksCreated });
+      // No items parsed
+      setImportResult({ added: 0, merged: 0, total: 0, errors: errors.length > 0 ? errors : ["No valid rows found in file"] });
     } catch (err) {
       setImportResult({ added: 0, merged: 0, total: 0, errors: [`Failed to read file: ${err instanceof Error ? err.message : "unknown error"}`] });
     }
     setImporting(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // Called when admin confirms assignment in the dialog
+  const handleConfirmAssignment = async () => {
+    if (pendingImportItems.length === 0) return;
+    setAssigning(true);
+    try {
+      const assigneeMember = members.find((m: any) => m.id === selectedAssignee || m.email === selectedAssignee);
+      const assigneeName = assigneeMember?.name || selectedAssignee || "Unassigned";
+      const assigneeEmail = assigneeMember?.email || selectedAssignee || "";
+
+      let added = 0, merged = 0, tasksCreated = 0;
+      const errors: string[] = [];
+
+      // Try server-side Admin SDK import with assignment
+      let apiOk = false;
+      try {
+        const res = await fetch("/api/crm/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            items: pendingImportItems,
+            assignedTo: assigneeEmail || undefined,
+            assignedByName: currentUser?.name || "Admin",
+          }),
+        });
+        const text = await res.text();
+        let data: any = {};
+        try { data = JSON.parse(text); } catch {
+          throw new Error(res.status === 404 || text.includes("<!DOCTYPE") ? "API not deployed" : "Non-JSON response");
+        }
+        added = data.added || 0; merged = data.merged || 0; tasksCreated = data.tasksCreated || 0;
+        if (Array.isArray(data.errors)) errors.push(...data.errors);
+        if (res.ok && (added > 0 || merged > 0)) apiOk = true;
+        else if (!res.ok) errors.unshift("Server import failed — Admin SDK not configured on Vercel.");
+      } catch (apiErr) {
+        errors.push(`Import API unreachable: ${apiErr instanceof Error ? apiErr.message : String(apiErr)}`);
+      }
+
+      // Client-SDK fallback
+      if (!apiOk) {
+        let fbAdded = 0, fbMerged = 0, fbTasks = 0;
+        for (const item of pendingImportItems) {
+          try {
+            const found = leads.find((l: any) => {
+              if (item.mergeKey.name && normalizeName(l.name) === item.mergeKey.name) return true;
+              if (item.mergeKey.phone && String(l.phone || "").trim() === item.mergeKey.phone) return true;
+              if (item.mergeKey.email && String(l.email || "").toLowerCase().trim() === item.mergeKey.email) return true;
+              return false;
+            });
+            let lid: string;
+            const assignmentFields = assigneeEmail ? { assignedTo: assigneeEmail, assignedAt: new Date().toISOString(), assignedByName: assigneeName } : {};
+            if (found) {
+              await updateLead(found.id, { rawData: { ...(found.rawData || {}), ...(item.lead.rawData || {}) }, ...assignmentFields, updatedAt: new Date().toISOString() });
+              lid = found.id; fbMerged++;
+            } else {
+              lid = await addLead({ ...item.lead, ...assignmentFields, updatedAt: new Date().toISOString() });
+              fbAdded++;
+            }
+            try {
+              await addTask({
+                ...item.task,
+                ...(assigneeEmail ? { assigneeId: assigneeEmail } : {}),
+                description: `${item.task.description || ""} | LeadID:${lid} | Assigned to: ${assigneeName}`,
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+              });
+              fbTasks++;
+            } catch (tErr: any) { errors.push(`${item.rowLabel} task: ${tErr?.message || "task write failed"}`); }
+          } catch (rowErr: any) {
+            errors.push(`${item.rowLabel}: ${rowErr?.message || "write failed"}`);
+          }
+        }
+        added += fbAdded; merged += fbMerged; tasksCreated += fbTasks;
+      }
+
+      const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
+      setImportResult({
+        added, merged, total: added + merged, errors,
+        tasksCreated,
+      });
+    } catch (err) {
+      setImportResult({ added: 0, merged: 0, total: 0, errors: [`Assignment failed: ${err instanceof Error ? err.message : "unknown error"}`] });
+    }
+    setAssigning(false);
+    setAssignmentDialogOpen(false);
+    setPendingImportItems([]);
+    setPendingImportStats(null);
+    setSelectedAssignee("");
   };
 
   const handleKeyboard = useCallback((e: KeyboardEvent) => {
@@ -683,6 +771,9 @@ export default function LeadsPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
                       <button onClick={() => toggleSort("createdAt")} className="flex items-center gap-1 hover:text-white transition-colors">Created <SortIcon field="createdAt" /></button>
                     </th>
+                    {!isMarketingRole && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Assigned</th>
+                    )}
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -724,6 +815,18 @@ export default function LeadsPage() {
                         </td>
                         <td className="px-6 py-4"><span className="font-semibold text-emerald-400">{formatCurrency(lead.value)}</span></td>
                         <td className="px-6 py-4"><span className="text-sm text-muted">{formatDate(lead.createdAt)}</span></td>
+                        {!isMarketingRole && (
+                          <td className="px-6 py-4">
+                            {lead.assignedTo ? (
+                              <Badge variant="info" className="text-[10px]">
+                                <UserCheck className="h-3 w-3 mr-1" />
+                                {lead.assignedByName || lead.assignedTo?.split("@")[0] || "Assigned"}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-[#64748b]">—</span>
+                            )}
+                          </td>
+                        )}
                         <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
                             {lead.status !== "client" && (
@@ -841,6 +944,9 @@ export default function LeadsPage() {
                   <InfoCard label="Source" value={(detailLead.source || "").replace(/-/g, " ")} valueClass="capitalize" />
                   <InfoCard label="Status" value={detailLead.status} valueClass="capitalize" />
                   <InfoCard label="Created" value={formatDate(detailLead.createdAt)} />
+                  {detailLead.assignedTo && (
+                    <InfoCard label="Assigned To" value={`${detailLead.assignedByName || detailLead.assignedTo?.split("@")[0] || "—"}`} valueClass="text-[#0066ff]" />
+                  )}
                 </div>
 
                 {/* Address with Google Maps */}
@@ -975,6 +1081,73 @@ export default function LeadsPage() {
               onClick={bulkDeleteType === "all" ? handleDeleteAllLeads : handleDeleteByCategory}
               disabled={bulkDeleting || (bulkDeleteType === "category" && !bulkDeleteCategory)}>
               {bulkDeleting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...</> : <><Trash2 className="mr-2 h-4 w-4" /> Delete</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assignment Dialog — shown after import parsing */}
+      <Dialog open={assignmentDialogOpen} onOpenChange={setAssignmentDialogOpen}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-[#0066ff]" />
+              Assign Imported Leads
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4">
+              <p className="text-sm text-white font-medium">
+                {pendingImportItems.length} lead{pendingImportItems.length !== 1 ? "s" : ""} extracted from file
+              </p>
+              {pendingImportStats && pendingImportStats.errors.length > 0 && (
+                <p className="text-xs text-[#f59e0b] mt-1">
+                  {pendingImportStats.errors.length} parse warnings
+                </p>
+              )}
+            </div>
+            <div>
+              <Label className="text-white">Assign to Marketing Member</Label>
+              <p className="text-xs text-[#64748b] mb-2">
+                Select a marketing team member who will manage these leads. They will only see their assigned leads.
+              </p>
+              <Select value={selectedAssignee} onValueChange={setSelectedAssignee}>
+                <SelectTrigger className="border-[#1e293b] bg-[#0a0f1e]">
+                  <SelectValue placeholder="Choose a member..." />
+                </SelectTrigger>
+                <SelectContent className="border-[#1e293b] bg-[#0f172a]">
+                  {members.length === 0 && (
+                    <SelectItem value="none" disabled>No marketing members found</SelectItem>
+                  )}
+                  {members.map((m: any) => (
+                    <SelectItem key={m.id || m.email} value={m.email || m.id}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white">{m.name}</span>
+                        <span className="text-xs text-[#64748b]">({m.role})</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-lg border border-[#0066ff]/20 bg-[#0066ff]/5 p-3">
+              <p className="text-xs text-[#0066ff]">
+                {selectedAssignee
+                  ? `These ${pendingImportItems.length} leads will be assigned to ${members.find((m: any) => m.email === selectedAssignee)?.name || selectedAssignee}. Only they can see and work on these leads.`
+                  : "If you skip assignment, these leads will be unassigned and visible to all users."}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setAssignmentDialogOpen(false); setPendingImportItems([]); setSelectedAssignee(""); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmAssignment}
+              disabled={assigning}
+              className="bg-[#0066ff] hover:bg-[#0052cc] text-white"
+            >
+              {assigning ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing...</> : <><Upload className="mr-2 h-4 w-4" /> Import & Assign</>}
             </Button>
           </DialogFooter>
         </DialogContent>

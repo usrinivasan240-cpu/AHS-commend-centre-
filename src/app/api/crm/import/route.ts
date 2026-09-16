@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const items: ImportItem[] = body?.items || [];
+    const assignedTo: string | undefined = body?.assignedTo || undefined;
+    const assignedByName: string | undefined = body?.assignedByName || undefined;
+    const assignedAt = assignedTo ? new Date().toISOString() : undefined;
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ added: 0, merged: 0, tasksCreated: 0, errors: ["No rows to import"] }, { status: 400 });
     }
@@ -58,9 +61,15 @@ export async function POST(req: NextRequest) {
         });
 
         let leadId: string | null = null;
+        const assignmentFields: Record<string, any> = {};
+        if (assignedTo) {
+          assignmentFields.assignedTo = assignedTo;
+          assignmentFields.assignedAt = assignedAt;
+          if (assignedByName) assignmentFields.assignedByName = assignedByName;
+        }
         if (found) {
           const mergedData = { ...(found.rawData || {}), ...(lead.rawData || {}) };
-          const updateFields: Record<string, any> = { rawData: mergedData, updatedAt: new Date().toISOString() };
+          const updateFields: Record<string, any> = { rawData: mergedData, updatedAt: new Date().toISOString(), ...assignmentFields };
           if (lead.phone && !found.phone) updateFields.phone = lead.phone;
           if (lead.email && !found.email) updateFields.email = lead.email;
           if (lead.category && (!found.category || found.category === "Uncategorized")) updateFields.category = lead.category;
@@ -72,6 +81,7 @@ export async function POST(req: NextRequest) {
         } else {
           const ref = await db.collection(COLLECTIONS.LEADS).add({
             ...lead,
+            ...assignmentFields,
             createdAt: lead.createdAt || new Date().toISOString().split("T")[0],
             updatedAt: new Date().toISOString(),
           });
@@ -83,6 +93,7 @@ export async function POST(req: NextRequest) {
         try {
           await db.collection(COLLECTIONS.TASKS).add({
             ...task,
+            ...(assignedTo ? { assigneeId: assignedTo } : {}),
             description: `${task.description || ""}${leadId ? ` | LeadID:${leadId}` : ""}`,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),

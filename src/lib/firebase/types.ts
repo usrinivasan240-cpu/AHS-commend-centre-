@@ -19,7 +19,7 @@ export type FirestoreUser = {
   id: string;
   name: string;
   email: string;
-  role: "super-admin" | "core-admin" | "team-lead" | "developer" | "intern" | "trainee" | "client";
+  role: "super-admin" | "core-admin" | "team-lead" | "developer" | "intern" | "trainee" | "client" | "marketing";
   team?: string;
   avatar?: string;
   status: "active" | "inactive" | "pending";
@@ -75,6 +75,9 @@ export type FirestoreLead = {
   status: "new" | "contacted" | "qualified" | "proposal" | "closed-won" | "closed-lost";
   value: number;
   createdAt: string;
+  assignedTo?: string;     // Firestore user doc ID of assigned marketing person
+  assignedAt?: string;     // ISO timestamp when assigned
+  assignedByName?: string; // Name of admin who assigned
 };
 
 export type FirestoreClient = {
