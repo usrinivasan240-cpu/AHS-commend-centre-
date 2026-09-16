@@ -140,7 +140,7 @@ export default function LeadsPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [newLead, setNewLead] = useState({
-    name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "",
+    name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "",
   });
 
   const allCategories = useMemo(() => {
@@ -259,12 +259,12 @@ export default function LeadsPage() {
         name: newLead.name || newLead.company, company: newLead.company || newLead.name,
         email: newLead.email, phone: newLead.phone, source: newLead.source,
         category: newLead.category, status: "new", value: Number(newLead.value) || 0,
-        notes: newLead.notes, rawData: { ...newLead },
+        notes: newLead.notes, reason: newLead.reason, rawData: { ...newLead },
         createdAt: new Date().toISOString().split("T")[0],
       };
       try { await apiWrite("POST", { lead: payload }); }
       catch { await addLead(payload); }
-      setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "" });
+      setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "" });
       setDialogOpen(false);
     } catch (err) { console.error(err); }
   };
@@ -782,6 +782,7 @@ export default function LeadsPage() {
               </div>
               <div><Label>Value (INR)</Label><Input type="number" value={newLead.value} onChange={(e) => setNewLead({ ...newLead, value: e.target.value })} placeholder="0" /></div>
             </div>
+            <div><Label>Reason / Description</Label><Textarea value={newLead.reason} onChange={(e) => setNewLead({ ...newLead, reason: e.target.value })} placeholder="Why this lead? What's the opportunity or context..." rows={2} /></div>
             <div><Label>Notes</Label><Textarea value={newLead.notes} onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })} placeholder="Additional notes..." rows={3} /></div>
           </div>
           <DialogFooter>
@@ -831,6 +832,7 @@ export default function LeadsPage() {
                 <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
                   <InfoCard label="Company" value={detailLead.company} />
                   <InfoCard label="Category" value={detailLead.category || detailLead.rawData?.category || "—"} />
+                  <InfoCard label="Reason" value={detailLead.reason || detailLead.rawData?.reason || "—"} />
                   <InfoCard label="Phone" value={detailLead.phone || "—"} icon={detailLead.phone ? <Phone className="h-3.5 w-3.5" /> : undefined}
                     href={detailLead.phone ? `tel:${detailLead.phone}` : undefined} />
                   <InfoCard label="Email" value={detailLead.email || "—"} icon={detailLead.email ? <Mail className="h-3.5 w-3.5" /> : undefined}
