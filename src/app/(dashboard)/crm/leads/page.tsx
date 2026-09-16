@@ -109,7 +109,7 @@ export default function LeadsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<any>(null);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ added: number; merged: number; total: number; errors: string[] } | null>(null);
+  const [importResult, setImportResult] = useState<{ added: number; merged: number; total: number; errors: string[]; tasksCreated?: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
@@ -434,14 +434,9 @@ export default function LeadsPage() {
       }
       const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
       if (added === 0 && merged === 0 && errors.length > 0 && errors.some((e) => e.includes("Missing or insufficient permissions") || e.includes("permission"))) {
-        errors.unshift("Firestore permission denied: deploy firestore.rules (firebase deploy --only firestore:rules) or set Firestore to allow writes. Run: firebase deploy --only firestore:rules --project ptpm-bf265");
+        errors.unshift("Firestore permission denied: paste firestore.rules from repo root into Firebase Console > Firestore > Rules for ptpm-bf265, then Publish. File is at /firestore.rules in this repo.");
       }
-      setImportResult({ added, merged, total: added + merged, errors: errors.length ? [...errors, `Tasks: ${tasksCreated}${suffix ? "" : ""}`] : [] } as any);
-      // surface tasks count in UI even when no errors: push as synthetic error-like info
-      if (errors.length === 0 && tasksCreated > 0) {
-        setImportResult({ added, merged, total: added + merged, errors: [`${tasksCreated} task(s) auto-created for system${suffix}`] } as any);
-        setTimeout(() => setImportResult((prev) => prev ? { ...prev, errors: [] } : prev), 6000);
-      }
+      setImportResult({ added, merged, total: added + merged, errors, tasksCreated });
     } catch (err) {
       setImportResult({ added: 0, merged: 0, total: 0, errors: [`Failed to read file: ${err instanceof Error ? err.message : "unknown error"}`] });
     }
@@ -541,7 +536,7 @@ export default function LeadsPage() {
                 <div className="flex items-center gap-3">
                   {importResult.errors.length > 0 ? <AlertTriangle className="h-5 w-5 text-[#f59e0b]" /> : <CheckCircle className="h-5 w-5 text-[#10b981]" />}
                   <div>
-                    <p className="text-sm font-medium text-white">Import Complete: {importResult.added} new, {importResult.merged} merged ({importResult.total} total)</p>
+                    <p className="text-sm font-medium text-white">Import Complete: {importResult.added} new, {importResult.merged} merged ({importResult.total} total){(importResult.tasksCreated ?? 0) > 0 ? `, ${importResult.tasksCreated} tasks created` : ""}</p>
                     {importResult.errors.length > 0 && (
                       <p className="text-xs text-[#f59e0b] mt-1">
                         {importResult.errors.length} warnings: {importResult.errors.slice(0, 3).join("; ")}
