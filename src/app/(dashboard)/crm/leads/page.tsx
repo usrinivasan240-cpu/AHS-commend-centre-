@@ -152,26 +152,18 @@ export default function LeadsPage() {
   const [selectedAssignee, setSelectedAssignee] = useState("");
   const [assigning, setAssigning] = useState(false);
 
-  // Fetch marketing members for assignment dropdown
+  // Fetch marketing members for assignment dropdown (via Admin SDK API route)
   useEffect(() => {
     if (membersLoaded) return;
     (async () => {
       try {
-        const { collection, getDocs } = await import("firebase/firestore");
-        const { db } = await import("@/lib/firebase/config");
-        const snap = await getDocs(collection(db, "users"));
-        const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-        setMembers(list.filter((m: any) => m.role === "marketing" || m.role === "super-admin"));
+        const res = await fetch("/api/users?role=marketing,super-admin");
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setMembers(data.filter((m: any) => m.role === "marketing" || m.role === "super-admin"));
+        }
         setMembersLoaded(true);
       } catch {
-        // Fallback: try Admin API
-        try {
-          const res = await fetch("/api/crm/lead?ping=1");
-          if (res.ok) {
-            // If API works, fetch members via a simple endpoint we'll create inline
-            // For now, populate from localStorage if available
-          }
-        } catch {}
         setMembersLoaded(true);
       }
     })();
