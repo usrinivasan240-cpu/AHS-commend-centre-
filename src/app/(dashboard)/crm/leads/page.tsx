@@ -245,6 +245,7 @@ export default function LeadsPage() {
       const ext = file.name.split(".").pop()?.toLowerCase() || "";
       let added = 0, merged = 0, tasksCreated = 0;
       const errors: string[] = [];
+      const items: { lead: Record<string, any>; task: Record<string, any>; mergeKey: { name: string; phone: string; email: string }; rowLabel: string }[] = [];
 
       // helper: parse CSV text into rows
       const parseCsvText = (text: string): any[][] => {
@@ -365,71 +366,53 @@ export default function LeadsPage() {
             const address = findField(addressFields);
             const review = findField(reviewFields);
             const valueStr = findField(valueFields);
-            const existingLead = leads.find((l: any) => {
-              const ln = normalizeName(l.name), cn = normalizeName(leadName);
-              if (ln && cn && ln === cn) return true;
-              if (l.phone && phone && String(l.phone).trim() === String(phone).trim()) return true;
-              if (l.email && email && String(l.email).toLowerCase().trim() === String(email).toLowerCase().trim()) return true;
-              return false;
-            });
-            let leadId: string | null = null;
+            // Build payload for server-side Admin SDK import (bypasses Firestore rules)
             const dueDateStr = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
             const companyVal = findField(["company", "business", "shop"]) || leadName;
-            if (existingLead) {
-              const mergedData: Record<string, any> = { ...(existingLead.rawData || {}) };
-              for (const [k, v] of Object.entries(rowObj)) {
-                if (v !== undefined && v !== null && String(v).trim() !== "") {
-                  const existingVal = mergedData[k];
-                  if (!existingVal || String(existingVal).length < String(v).length) mergedData[k] = v;
-                }
-              }
-              const updateFields: Record<string, any> = { rawData: mergedData };
-              if (phone && !existingLead.phone) updateFields.phone = phone;
-              if (email && !existingLead.email) updateFields.email = email;
-              if (category && !existingLead.category) updateFields.category = category;
-              if (address) mergedData.address = address;
-              if (review) mergedData.reviews = [...(existingLead.rawData?.reviews || []), review];
-              if (valueStr) {
-                const newVal = parseFloat(String(valueStr).replace(/[^0-9.]/g, ""));
-                if (!isNaN(newVal) && newVal > (existingLead.value || 0)) updateFields.value = newVal;
-              }
-              await updateLead(existingLead.id, updateFields);
-              leadId = existingLead.id;
-              merged++;
-            } else {
-              const allData: Record<string, any> = { ...rowObj };
-              if (address) allData.address = address;
-              if (review) allData.reviews = [review];
-              if (sheetName) allData._sheetName = sheetName;
-              leadId = await addLead({
+            const valueNum = valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0;
+            const allData: Record<string, any> = { ...rowObj };
+            if (address) allData.address = address;
+            if (review) allData.reviews = [review];
+            if (sheetName) allData._sheetName = sheetName;
+            const taskTitle = category ? `Follow up: ${leadName} [${category}]` : `Follow up: ${leadName}`;
+            const taskPriority = valueNum > 50000 ? "high" : "medium";
+            items.push({
+              lead: {
                 name: leadName, company: companyVal,
-                email, phone, source: ext === "pdf" ? "pdf-import" : ext === "csv" ? "csv-import" : "excel-import", category: category || "Uncategorized",
-                status: "new", value: valueStr ? parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) || 0 : 0,
+                email, phone, source: ext === "pdf" ? "pdf-import" : ext === "csv" ? "csv-import" : "excel-import",
+                category: category || "Uncategorized", status: "new", value: valueNum,
                 notes: `Imported from ${file.name} (sheet: ${sheetName}, row: ${i + 1})`, rawData: allData,
                 createdAt: new Date().toISOString().split("T")[0],
-              });
-              added++;
-            }
-            // always create a Task for the system regardless of format
-            try {
-              const taskTitle = category ? `Follow up: ${leadName} [${category}]` : `Follow up: ${leadName}`;
-              const taskPriority = valueStr && parseFloat(String(valueStr).replace(/[^0-9.]/g, "")) > 50000 ? "high" as const : "medium" as const;
-              await addTask({
-                projectId: "crm-import",
-                title: taskTitle,
-                status: "todo",
-                priority: taskPriority,
-                assigneeId: "",
-                dueDate: dueDateStr,
-                description: `Lead: ${leadName} (${companyVal}) | Phone: ${phone || "—"} | Email: ${email || "—"} | Category: ${category || "Uncategorized"} | Value: ${valueStr || "0"} | Source: ${file.name} sheet:${sheetName} row:${i + 1}${leadId ? ` | LeadID:${leadId}` : ""}${address ? ` | Addr:${address}` : ""}`,
-              });
-              tasksCreated++;
-            } catch (taskErr) {
-              errors.push(`Row ${i + 1} "${sheetName}" task: ${taskErr instanceof Error ? taskErr.message : String(taskErr)}`);
-            }
+              },
+              task: {
+                projectId: "crm-import", title: taskTitle, status: "todo", priority: taskPriority,
+                assigneeId: "", dueDate: dueDateStr,
+                description: `Lead: ${leadName} (${companyVal}) | Phone: ${phone || "—"} | Email: ${email || "—"} | Category: ${category || "Uncategorized"} | Value: ${valueStr || "0"} | Source: ${file.name} sheet:${sheetName} row:${i + 1}${address ? ` | Addr:${address}` : ""}`,
+              },
+              mergeKey: { name: normalizeName(leadName), phone: String(phone || "").trim(), email: String(email || "").toLowerCase().trim() },
+              rowLabel: `Row ${i + 1} in "${sheetName}"`,
+            });
           } catch (rowErr) {
             errors.push(`Row ${i + 1} in "${sheetName}": ${rowErr instanceof Error ? rowErr.message : "parse error"}`);
           }
+        }
+      }
+      // Server-side import via Admin SDK (bypasses client Firestore rules)
+      if (items.length > 0) {
+        try {
+          const res = await fetch("/api/crm/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items }),
+          });
+          const data = await res.json();
+          added = data.added || 0; merged = data.merged || 0; tasksCreated = data.tasksCreated || 0;
+          if (Array.isArray(data.errors)) errors.push(...data.errors);
+          if (!res.ok && added === 0 && merged === 0) {
+            errors.unshift("Server import failed — check Vercel env FIREBASE_ADMIN_PRIVATE_KEY / FIREBASE_ADMIN_CLIENT_EMAIL, or local service JSON.");
+          }
+        } catch (apiErr) {
+          errors.push(`Import API unreachable: ${apiErr instanceof Error ? apiErr.message : String(apiErr)}`);
         }
       }
       const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
