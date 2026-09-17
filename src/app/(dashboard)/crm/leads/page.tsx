@@ -149,6 +149,9 @@ export default function LeadsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const [detailSaving, setDetailSaving] = useState(false);
+  const [detailManualNote, setDetailManualNote] = useState("");
+  const [detailShowManual, setDetailShowManual] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleteType, setBulkDeleteType] = useState<"all" | "category">("all");
   const [bulkDeleteCategory, setBulkDeleteCategory] = useState("");
@@ -293,6 +296,36 @@ export default function LeadsPage() {
       try { await apiWrite("PATCH", { id: leadId, fields: { status: newStatus } }); }
       catch { await updateLead(leadId, { status: newStatus }); }
     } catch (err) { console.error(err); }
+  };
+
+  const handleDetailStatusChange = async (newStatus: string) => {
+    if (!detailLead) return;
+    const prev = detailLead.status;
+    setDetailLead((d: any) => ({ ...d, status: newStatus }));
+    if (newStatus === "manual") setDetailShowManual(true);
+    setDetailSaving(true);
+    try {
+      try { await apiWrite("PATCH", { id: detailLead.id, fields: { status: newStatus } }); }
+      catch { await updateLead(detailLead.id, { status: newStatus }); }
+    } catch (e) {
+      setDetailLead((d: any) => ({ ...d, status: prev }));
+      console.error(e);
+    }
+    setDetailSaving(false);
+  };
+
+  const handleSaveManualNote = async () => {
+    if (!detailLead) return;
+    setDetailSaving(true);
+    const now = new Date().toISOString();
+    const by = currentUser?.name || currentUser?.email || "Unknown";
+    try {
+      const fields: any = { manualNote: detailManualNote, manualUpdatedAt: now, manualUpdatedBy: by };
+      try { await apiWrite("PATCH", { id: detailLead.id, fields }); }
+      catch { await updateLead(detailLead.id, fields); }
+      setDetailLead((d: any) => ({ ...d, ...fields }));
+    } catch (e) { console.error(e); }
+    setDetailSaving(false);
   };
 
   const handleConvertToClient = async (lead: any) => {
@@ -625,6 +658,13 @@ export default function LeadsPage() {
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, [handleKeyboard]);
+
+  // Keep manual-note editor in sync when opening / navigating leads
+  useEffect(() => {
+    if (!detailLead) return;
+    setDetailManualNote(detailLead.manualNote || "");
+    setDetailShowManual(detailLead.status === "manual" || !!detailLead.manualNote);
+  }, [detailLead?.id, detailLead?.manualNote, detailLead?.status]);
 
   const renderValue = (key: string, val: any) => {
     if (val === null || val === undefined || val === "") return <span>—</span>;
@@ -990,12 +1030,62 @@ export default function LeadsPage() {
                     href={detailLead.email ? `mailto:${detailLead.email}` : undefined} />
                   <InfoCard label="Value" value={formatCurrency(detailLead.value)} valueClass="text-emerald-400" />
                   <InfoCard label="Source" value={(detailLead.source || "").replace(/-/g, " ")} valueClass="capitalize" />
-                  <InfoCard label="Status" value={detailLead.status} valueClass="capitalize" />
+                  <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-4">
+                    <p className="text-xs font-medium text-muted uppercase mb-2 flex items-center justify-between">
+                      Status {detailSaving && <span className="text-[10px] text-[#00d9ff] normal-case flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> saving…</span>}
+                    </p>
+                    <Select value={detailLead.status} onValueChange={handleDetailStatusChange} disabled={detailSaving}>
+                      <SelectTrigger className="h-9 bg-[#050816] border-[#1e293b] text-white"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="new">New</SelectItem>
+                        <SelectItem value="contacted">Contacted</SelectItem>
+                        <SelectItem value="qualified">Qualified</SelectItem>
+                        <SelectItem value="proposal">Proposal</SelectItem>
+                        <SelectItem value="client">Client</SelectItem>
+                        <SelectItem value="closed-won">Closed Won</SelectItem>
+                        <SelectItem value="closed-lost">Closed Lost</SelectItem>
+                        <SelectItem value="manual">Manual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <label className="mt-3 flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" checked={detailShowManual} onChange={(e) => setDetailShowManual(e.target.checked)} className="h-3.5 w-3.5 rounded border-[#334155] bg-[#050816] text-[#0066ff] focus:ring-[#0066ff]" />
+                      <span className="text-xs text-[#94a3b8]">Add call description (works with any status — e.g. Proposal + Manual)</span>
+                    </label>
+                  </div>
                   <InfoCard label="Created" value={formatDate(detailLead.createdAt)} />
                   {detailLead.assignedTo && (
                     <InfoCard label="Assigned To" value={`${detailLead.assignedByName || detailLead.assignedTo?.split("@")[0] || "—"}`} valueClass="text-[#0066ff]" />
                   )}
                 </div>
+
+                {/* Manual call note — shown when Manual is selected or toggled; saves to manualNote */}
+                {detailShowManual && (
+                  <Card className="border-[#1e293b] bg-[#0a0f1e]">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-muted uppercase">Call Description</span>
+                        {detailLead.manualUpdatedAt && (
+                          <span className="text-[10px] text-[#64748b]">last saved {formatDate(detailLead.manualUpdatedAt)} by {detailLead.manualUpdatedBy || "—"}</span>
+                        )}
+                      </div>
+                      <Textarea
+                        value={detailManualNote}
+                        onChange={(e) => setDetailManualNote(e.target.value)}
+                        placeholder="Describe what happened on the call — outcome, next step, objections, follow-up date…"
+                        rows={4}
+                        className="bg-[#050816] border-[#1e293b] text-white placeholder:text-[#475569]"
+                      />
+                      <div className="flex justify-end">
+                        <Button size="sm" onClick={handleSaveManualNote} disabled={detailSaving} className="bg-[#0066ff] hover:bg-[#0052cc] text-white">
+                          {detailSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : "Save description"}
+                        </Button>
+                      </div>
+                      {detailLead.manualNote && detailLead.manualNote !== detailManualNote && (
+                        <p className="text-[11px] text-[#64748b]">Saved: {detailLead.manualNote.slice(0, 160)}{detailLead.manualNote.length > 160 ? "…" : ""}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Address with Google Maps */}
                 {detailLead.rawData?.address && (

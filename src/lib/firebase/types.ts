@@ -84,12 +84,15 @@ export type FirestoreLead = {
   email: string;
   phone: string;
   source: "website" | "referral" | "linkedin" | "cold-outreach" | "social-media";
-  status: "new" | "contacted" | "qualified" | "proposal" | "closed-won" | "closed-lost";
+  status: "new" | "contacted" | "qualified" | "proposal" | "closed-won" | "closed-lost" | "manual";
   value: number;
   createdAt: string;
   assignedTo?: string;     // Firestore user doc ID of assigned marketing person
   assignedAt?: string;     // ISO timestamp when assigned
   assignedByName?: string; // Name of admin who assigned
+  manualNote?: string;     // Call outcome description when marketing marks manual / proposal+manual
+  manualUpdatedAt?: string;
+  manualUpdatedBy?: string;
 };
 
 export type FirestoreClient = {
