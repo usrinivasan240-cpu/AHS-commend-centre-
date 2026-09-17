@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const studentEmail = String(body.studentEmail || actor!.email).toLowerCase();
 
     if (action === "start") {
-      requireLmsRoles(actor, ["student"]);
+      requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
       const testId = String(body.testId || "");
       if (!testId) return NextResponse.json({ error: "testId required" }, { status: 400 });
       const testSnap = await db.collection(COLLECTIONS.LMS_TESTS).doc(testId).get();

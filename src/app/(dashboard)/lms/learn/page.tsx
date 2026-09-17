@@ -55,6 +55,7 @@ export default function LearnPage() {
   const [runner, setRunner] = useState<{ attempt: Doc; test: Doc } | null>(null);
   const [confirmTest, setConfirmTest] = useState<Doc | null>(null);
   const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
 
   const load = useCallback(async () => {
     if (!actorEmail) return;
@@ -167,6 +168,7 @@ export default function LearnPage() {
   const confirmStartTest = async () => {
     if (!confirmTest) return;
     setStarting(true);
+    setStartError("");
     try {
       // Enter fullscreen if the browser permits (master STRICT TEST MODE).
       try {
@@ -179,6 +181,7 @@ export default function LearnPage() {
       lmsPost("/api/lms/events", { actorEmail, kind: "TEST_STARTED", attemptId: (res.attempt as Doc).id, testId: confirmTest.id, studentId: actorEmail }).catch(() => {});
       setConfirmTest(null);
     } catch (e: any) {
+      setStartError(e.message);
       setError(e.message);
     }
     setStarting(false);
@@ -394,7 +397,7 @@ export default function LearnPage() {
                     <Button
                       onClick={() => (latest?.status === "in_progress" ? (async () => {
                         setRunner({ attempt: latest, test: t });
-                      })() : setConfirmTest(t))}
+                      })() : (setStartError(""), setConfirmTest(t)))}
                       disabled={limitReached && latest?.status !== "in_progress"}
                       className="bg-[#0066ff] hover:bg-[#0052cc] text-white"
                     >
@@ -498,6 +501,9 @@ export default function LearnPage() {
           <p className="text-xs text-[#64748b]">
             {(confirmTest?.questions || []).length} questions · {confirmTest?.timeLimitMinutes || 20} minutes · pass {confirmTest?.passPercent || 60}% · {(confirmTest?.maxAttempts ?? 1)} attempt(s) allowed.
           </p>
+          {startError && (
+            <p className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-2 text-xs text-[#ef4444]">{startError}</p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmTest(null)}>Cancel</Button>
             <Button onClick={confirmStartTest} disabled={starting} className="bg-[#f59e0b] hover:bg-[#d97706] text-black font-semibold">
