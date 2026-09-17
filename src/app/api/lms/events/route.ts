@@ -11,7 +11,12 @@ async function dbOrThrow() {
   return getAdminDb();
 }
 
-const KINDS = ["start", "heartbeat", "focus", "blur", "copy", "paste", "tab", "nav", "submit"];
+const KINDS = [
+  "start", "heartbeat", "focus", "blur", "copy", "paste", "tab", "nav", "submit",
+  "TEST_STARTED", "TEST_SUBMITTED", "TAB_SWITCH", "WINDOW_BLUR", "WINDOW_FOCUS",
+  "FULLSCREEN_ENTER", "FULLSCREEN_EXIT", "BACK_ATTEMPT", "EXIT_ATTEMPT",
+  "TIME_WARNING", "TIME_EXPIRED", "SUBMISSION_CONFIRMED",
+];
 
 // POST /api/lms/events — ingest one activity event (any LMS role)
 export async function POST(req: NextRequest) {
@@ -32,6 +37,10 @@ export async function POST(req: NextRequest) {
       at: now,
     };
     if (body.attemptId) event.attemptId = String(body.attemptId);
+    if (body.studentId) event.studentId = String(body.studentId);
+    if (body.testId) event.testId = String(body.testId);
+    if (body.timestamp) event.timestamp = String(body.timestamp);
+    if (typeof body.durationSeconds === "number") event.durationSeconds = body.durationSeconds;
     if (body.meta && typeof body.meta === "object") event.meta = body.meta;
     await db.collection(COLLECTIONS.LMS_EVENTS).doc(event.id).set(event);
     return NextResponse.json({ ok: true, id: event.id });

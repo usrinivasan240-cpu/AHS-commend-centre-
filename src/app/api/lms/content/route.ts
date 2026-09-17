@@ -5,6 +5,7 @@ import {
   requireLmsRoles,
   resolveActor,
   serverTimestamp,
+  shuffleTestForStudent,
   stripTestForStudent,
 } from "@/lib/lms/server";
 
@@ -89,7 +90,10 @@ export async function GET(req: NextRequest) {
     let tests = docsOf(tstSnap)
       .filter(pub)
       .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
-    if (!privileged) tests = tests.map((t: any) => stripTestForStudent(t));
+    if (!privileged)
+      tests = tests.map((t: any) =>
+        shuffleTestForStudent(stripTestForStudent(t) as any, actor!.email) as any
+      );
 
     return NextResponse.json({ course, modules, lessons, practices, handsons, tests });
   } catch (err: any) {

@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COLLECTIONS } from "@/lib/firebase/types";
-import { requireLmsRoles, resolveActor, serverTimestamp } from "@/lib/lms/server";
-import type { LmsSubmission } from "@/lib/lms/types";
+import {
+  auditLog,
+  notifyUser,
+  requireLmsRoles,
+  resolveActor,
+  serverTimestamp,
+} from "@/lib/lms/server";
+import type { LmsSubmission, LmsSubmissionStatus } from "@/lib/lms/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,11 +57,17 @@ export async function POST(req: NextRequest) {
       const ref = db.collection(COLLECTIONS.LMS_SUBMISSIONS).doc(id);
       const snap = await ref.get();
       if (!snap.exists) return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+      const prev = snap.data() as LmsSubmission;
+      const rawStatus = String(body.reviewStatus || "reviewed");
+      const status: LmsSubmissionStatus = ["reviewed", "under_review", "resubmit_required"].includes(rawStatus)
+        ? (rawStatus as LmsSubmissionStatus)
+        : "reviewed";
       const now = serverTimestamp();
+      const feedback = String(body.feedback || "");
       await ref.set(
         {
-          status: "reviewed",
-          feedback: String(body.feedback || ""),
+          status,
+          feedback,
           score: typeof body.score === "number" ? body.score : undefined,
           reviewedAt: now,
           reviewedBy: actor!.email,
@@ -63,6 +75,21 @@ export async function POST(req: NextRequest) {
         },
         { merge: true }
       );
+      await notifyUser(db, {
+        title: status === "resubmit_required" ? "Resubmission requested" : "Trainer feedback received",
+        message: `Your submission was marked ${status.replace("_", " ")}${feedback ? `: ${feedback.slice(0, 140)}` : "."}`,
+        type: "assignment",
+        targetEmail: prev.studentEmail,
+        courseId: prev.courseId,
+      });
+      await auditLog(db, {
+        actorId: actor!.id,
+        actorRole: actor!.role,
+        action: feedback ? "FEEDBACK_ADDED" : "MARKS_UPDATED",
+        targetType: "lms_submission",
+        targetId: id,
+        metadata: { status, studentEmail: prev.studentEmail },
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -85,7 +112,16 @@ export async function POST(req: NextRequest) {
     if (body.practiceId) submission.practiceId = String(body.practiceId);
     if (body.handsonId) submission.handsonId = String(body.handsonId);
     if (body.language) submission.language = String(body.language);
+    if (body.submissionType) submission.submissionType = body.submissionType;
+    if (body.githubUrl) submission.githubUrl = String(body.githubUrl);
+    if (body.liveUrl) submission.liveUrl = String(body.liveUrl);
     await db.collection(COLLECTIONS.LMS_SUBMISSIONS).doc(submission.id).set(submission);
+    await notifyUser(db, {
+      title: "New student submission",
+      message: `${actor!.email} submitted ${submission.practiceId || submission.handsonId || "work"}.`,
+      type: "assignment",
+      courseId,
+    });
     return NextResponse.json({ ok: true, id: submission.id });
   } catch (err: any) {
     const msg = err?.message || "Submission failed";

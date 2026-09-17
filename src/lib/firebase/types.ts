@@ -23,6 +23,8 @@ export const COLLECTIONS = {
   LMS_EVENTS: "lms_events",
   LMS_SUBMISSIONS: "lms_submissions",
   LMS_PROGRESS: "lms_progress",
+  LMS_PROJECTS: "lms_projects",
+  LMS_CERTIFICATES: "lms_certificates",
 } as const;
 
 export type FirestoreUser = {

@@ -20,4 +20,4 @@ export async function lmsPost<T>(path: string, body: Record<string, unknown>): P
   return data as T;
 }
 
-export const LMS_COURSE_ID = "ai-app-dev-bootcamp";
+export const LMS_COURSE_ID = "AHS-AI-BOOTCAMP";

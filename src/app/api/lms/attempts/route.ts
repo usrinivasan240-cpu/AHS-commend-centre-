@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import {
+  auditLog,
+  mergeSkillLevels,
+  notifyUser,
   requireLmsRoles,
   resolveActor,
   scoreAttempt,
   serverTimestamp,
+  skillsForModule,
 } from "@/lib/lms/server";
-import type { LmsAttempt, LmsTest } from "@/lib/lms/types";
+import type { LmsAttempt, LmsProgress, LmsTest } from "@/lib/lms/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +21,7 @@ async function dbOrThrow() {
 }
 
 function errStatus(msg: string) {
-  return /Unauthorized|Forbidden|not found|closed|already/i.test(msg) ? 403 : 500;
+  return /Unauthorized|Forbidden|not found|closed|already|limit|expired/i.test(msg) ? 403 : 500;
 }
 
 // POST /api/lms/attempts — start (or resume) an attempt. Body: { actorEmail, testId, action: "start" | "save" | "submit", attemptId?, answers? }
@@ -38,7 +42,7 @@ export async function POST(req: NextRequest) {
       if (!testSnap.exists) return NextResponse.json({ error: "Test not found" }, { status: 404 });
       const test = { id: testSnap.id, ...(testSnap.data() as Record<string, unknown>) } as unknown as LmsTest;
 
-      // Single-attempt guard: resume existing in_progress attempt
+      // Resume existing in_progress attempt — never create a second one.
       const existing = await db
         .collection(COLLECTIONS.LMS_ATTEMPTS)
         .where("testId", "==", testId)
@@ -51,7 +55,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ attempt: { id: d.id, ...(d.data() as object) }, resumed: true });
       }
 
+      // Attempt-limit guard (default 1 per master spec).
+      const maxAttempts = typeof test.maxAttempts === "number" ? test.maxAttempts : 1;
+      const closedSnap = await db
+        .collection(COLLECTIONS.LMS_ATTEMPTS)
+        .where("testId", "==", testId)
+        .where("studentEmail", "==", studentEmail)
+        .get();
+      const closedCount = closedSnap.docs.filter((d) => (d.data() as LmsAttempt).status !== "in_progress").length;
+      if (closedCount >= maxAttempts) {
+        return NextResponse.json(
+          { error: `Attempt limit reached (${maxAttempts}). Contact your trainer.` },
+          { status: 403 }
+        );
+      }
+
       const now = serverTimestamp();
+      const minutes = typeof test.timeLimitMinutes === "number" ? test.timeLimitMinutes : 20;
       const attempt: LmsAttempt = {
         id: `${testId}__${studentEmail}__${Date.now()}`,
         testId,
@@ -60,9 +80,18 @@ export async function POST(req: NextRequest) {
         status: "in_progress",
         answers: {},
         startedAt: now,
+        expiresAt: new Date(Date.now() + minutes * 60000).toISOString(),
         updatedAt: now,
       };
       await db.collection(COLLECTIONS.LMS_ATTEMPTS).doc(attempt.id).set(attempt);
+      await auditLog(db, {
+        actorId: actor!.id,
+        actorRole: actor!.role,
+        action: "TEST_STARTED",
+        targetType: "test_attempt",
+        targetId: attempt.id,
+        metadata: { testId, studentEmail },
+      });
       return NextResponse.json({ attempt, resumed: false });
     }
 
@@ -100,20 +129,87 @@ export async function POST(req: NextRequest) {
       if (!testSnap.exists) return NextResponse.json({ error: "Test not found" }, { status: 404 });
       const test = testSnap.data() as LmsTest;
 
+      const now = serverTimestamp();
+      // Server-side timer validation: frontend clocks are advisory only.
+      const timeExpired = attempt.expiresAt ? now > attempt.expiresAt : false;
+
       const answers = (body.answers || attempt.answers || {}) as Record<string, string[]>;
       const { scorePercent, needsReview } = scoreAttempt(test.questions, answers);
-      const now = serverTimestamp();
+      const passed = scorePercent >= (test.passPercent ?? 60);
+
+      // Activity summary from ingested events.
+      const evtSnap = await db
+        .collection(COLLECTIONS.LMS_EVENTS)
+        .where("attemptId", "==", attemptId)
+        .get();
+      const activitySummary: Record<string, number> = {};
+      for (const d of evtSnap.docs) {
+        const k = String((d.data() as { kind?: string }).kind || "unknown");
+        activitySummary[k] = (activitySummary[k] || 0) + 1;
+      }
+
+      const startedMs = new Date(attempt.startedAt).getTime();
       const update: Partial<LmsAttempt> = {
         answers,
         status: needsReview ? "submitted" : "scored",
         scorePercent,
         needsReview,
+        timeExpired,
         submittedAt: now,
+        durationSeconds: Math.max(0, Math.round((Date.now() - startedMs) / 1000)),
+        activitySummary,
         updatedAt: now,
       };
+      if (timeExpired) activitySummary.TIME_EXPIRED = (activitySummary.TIME_EXPIRED || 0) + 1;
       if (!needsReview) update.scoredAt = now;
       await ref.set(update, { merge: true });
-      return NextResponse.json({ ok: true, scorePercent, needsReview, status: update.status });
+
+      // Update student progress: passed tests + skill levels (server-side, never client-trusted).
+      try {
+        const progressId = `${attempt.courseId}__${attempt.studentEmail}`;
+        const pRef = db.collection(COLLECTIONS.LMS_PROGRESS).doc(progressId);
+        const pSnap = await pRef.get();
+        const existing = (pSnap.exists ? pSnap.data() : null) as LmsProgress | null;
+        const passedTests = new Set(existing?.passedTestIds || []);
+        if (passed) passedTests.add(attempt.testId);
+        const skills = mergeSkillLevels(
+          existing?.skills,
+          skillsForModule((test as LmsTest).moduleId || ""),
+          scorePercent
+        );
+        await pRef.set(
+          {
+            id: progressId,
+            courseId: attempt.courseId,
+            studentEmail: attempt.studentEmail,
+            passedTestIds: [...passedTests],
+            skills,
+            status: existing?.status && existing.status !== "NOT_STARTED" ? existing.status : "IN_PROGRESS",
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      } catch {
+        // Progress sync is best-effort.
+      }
+
+      await notifyUser(db, {
+        title: `Test ${needsReview ? "submitted for review" : passed ? "passed" : "submitted"}: ${test.title}`,
+        message: `${attempt.studentEmail} scored ${scorePercent}%${timeExpired ? " (time expired)" : ""}.`,
+        type: "assessment",
+        targetEmail: attempt.studentEmail,
+        courseId: attempt.courseId,
+      });
+      await auditLog(db, {
+        actorId: actor!.id,
+        actorRole: actor!.role,
+        action: "TEST_SUBMITTED",
+        targetType: "test_attempt",
+        targetId: attemptId,
+        metadata: { testId: attempt.testId, scorePercent, timeExpired },
+      });
+
+      return NextResponse.json({ ok: true, scorePercent, needsReview, passed, timeExpired, status: update.status });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
