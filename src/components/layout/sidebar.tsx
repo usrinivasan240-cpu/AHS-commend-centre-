@@ -17,6 +17,7 @@ import {
   BarChart3,
   Bell,
   Settings,
+  GraduationCap,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -55,6 +56,16 @@ const allNavigation: NavItem[] = [
     children: [
       { label: "Courses", href: "/learning/courses", permission: "Manage Courses" },
       { label: "Assignments", href: "/learning/assignments", permission: "Manage Courses" },
+    ],
+  },
+  {
+    label: "Bootcamp",
+    href: "/lms",
+    icon: GraduationCap,
+    children: [
+      { label: "My Learning", href: "/lms/learn", permission: "Learn Courses" },
+      { label: "Courses", href: "/lms/courses", permission: "Teach Courses" },
+      { label: "Test Monitoring", href: "/lms/monitoring", permission: "Monitor Tests" },
     ],
   },
   {

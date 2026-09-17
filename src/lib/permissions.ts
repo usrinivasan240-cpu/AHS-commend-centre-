@@ -11,6 +11,10 @@ const ALL_PERMISSIONS = [
   "Manage Invoices",
   "Manage Courses",
   "Schedule Assessments",
+  "Manage LMS",
+  "Teach Courses",
+  "Learn Courses",
+  "Monitor Tests",
   "View AI Insights",
   "System Settings",
   "View Audit Logs",
@@ -26,6 +30,8 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   "trainee": ["View Dashboard", "View Reports", "Manage Courses"],
   "client": ["View Dashboard", "View Reports"],
   "marketing": ["View Dashboard", "Manage Leads", "Manage Clients", "View Reports", "View AI Insights", "Manage Notifications"],
+  "trainer": ["View Dashboard", "View Reports", "Teach Courses", "Monitor Tests", "Manage Notifications"],
+  "student": ["View Dashboard", "Learn Courses"],
 };
 
 export function getRolePermissions(role: string): string[] {
@@ -86,8 +92,9 @@ export function canAccessRoute(role: string, pathname: string): boolean {
     "/people/teams": ["Create Teams"],
     "/people/roles": ["Assign Roles"],
     "/people/[id]": ["Manage Members"],
-    "/learning/courses": ["Manage Courses"],
-    "/learning/assignments": ["Manage Courses"],
+    "/learning/courses": ["Manage Courses", "Manage LMS", "Teach Courses", "Learn Courses"],
+    "/learning/assignments": ["Manage Courses", "Manage LMS", "Teach Courses", "Learn Courses"],
+    "/lms": ["Manage LMS", "Teach Courses", "Learn Courses"],
     "/assessments": ["Schedule Assessments"],
     "/assessments/builder": ["Schedule Assessments"],
     "/assessments/published": ["Schedule Assessments", "View Reports"],

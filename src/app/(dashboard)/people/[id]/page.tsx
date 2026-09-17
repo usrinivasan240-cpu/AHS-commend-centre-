@@ -50,6 +50,8 @@ const roleLabels: Record<Role, string> = {
   trainee: "Trainee",
   marketing: "Marketing",
   client: "Client",
+  trainer: "Trainer",
+  student: "Student",
 };
 
 const roleBadgeVariant: Record<Role, "default" | "secondary" | "success" | "warning" | "danger" | "info" | "outline"> = {
@@ -61,6 +63,8 @@ const roleBadgeVariant: Record<Role, "default" | "secondary" | "success" | "warn
   trainee: "secondary",
   marketing: "info",
   client: "outline",
+  trainer: "success",
+  student: "secondary",
 };
 
 const statusVariant: Record<MemberStatus, "success" | "danger" | "warning"> = {

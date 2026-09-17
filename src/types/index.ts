@@ -6,7 +6,9 @@ export type Role =
   | "intern"
   | "trainee"
   | "client"
-  | "marketing";
+  | "marketing"
+  | "trainer"
+  | "student";
 
 export type MemberStatus = "active" | "inactive" | "pending";
 

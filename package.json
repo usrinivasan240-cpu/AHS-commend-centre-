@@ -7,7 +7,8 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "seed": "npx tsx scripts/seed-firestore.ts"
+    "seed": "npx tsx scripts/seed-firestore.ts",
+    "seed:lms": "npx tsx scripts/seed-lms.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.12",
