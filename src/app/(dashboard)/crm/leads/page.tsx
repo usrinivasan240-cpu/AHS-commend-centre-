@@ -72,6 +72,7 @@ const statusVariant: Record<string, "default" | "success" | "warning" | "danger"
   "closed-won": "success",
   "closed-lost": "danger",
   client: "success",
+  manual: "secondary",
 };
 
 function normalizeName(s: string): string {
@@ -174,7 +175,7 @@ export default function LeadsPage() {
   const currentUserId = currentUser?.email; // email used as fallback id since auth stores email not doc ID
 
   const [newLead, setNewLead] = useState({
-    name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "",
+    name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "", status: "new",
   });
 
   const allCategories = useMemo(() => {
@@ -320,14 +321,14 @@ export default function LeadsPage() {
       const payload = {
         name: newLead.name || newLead.company, company: newLead.company || newLead.name,
         email: newLead.email, phone: newLead.phone, source: newLead.source,
-        category: newLead.category, status: "new", value: Number(newLead.value) || 0,
+        category: newLead.category, status: newLead.status || "new", value: Number(newLead.value) || 0,
         notes: newLead.notes, reason: newLead.reason, rawData: { ...newLead },
         ...(creatorEmail ? { assignedTo: creatorEmail, assignedAt: new Date().toISOString(), assignedByName: currentUser?.name || "Self" } : {}),
         createdAt: new Date().toISOString().split("T")[0],
       };
       try { await apiWrite("POST", { lead: payload }); }
       catch { await addLead(payload); }
-      setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "" });
+      setNewLead({ name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "", status: "new" });
       setDialogOpen(false);
     } catch (err) { console.error(err); }
   };
@@ -719,6 +720,7 @@ export default function LeadsPage() {
             <SelectItem value="client">Client</SelectItem>
             <SelectItem value="closed-won">Closed Won</SelectItem>
             <SelectItem value="closed-lost">Closed Lost</SelectItem>
+            <SelectItem value="manual">Manual</SelectItem>
           </SelectContent>
         </Select>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -816,6 +818,7 @@ export default function LeadsPage() {
                               <SelectItem value="client">Client</SelectItem>
                               <SelectItem value="closed-won">Closed Won</SelectItem>
                               <SelectItem value="closed-lost">Closed Lost</SelectItem>
+                              <SelectItem value="manual">Manual</SelectItem>
                             </SelectContent>
                           </Select>
                         </td>
@@ -891,6 +894,22 @@ export default function LeadsPage() {
                 </Select>
               </div>
               <div><Label>Value (INR)</Label><Input type="number" value={newLead.value} onChange={(e) => setNewLead({ ...newLead, value: e.target.value })} placeholder="0" /></div>
+            </div>
+            <div><Label>Status</Label>
+              <Select value={newLead.status} onValueChange={(v) => setNewLead({ ...newLead, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">New</SelectItem>
+                  <SelectItem value="contacted">Contacted</SelectItem>
+                  <SelectItem value="qualified">Qualified</SelectItem>
+                  <SelectItem value="proposal">Proposal</SelectItem>
+                  <SelectItem value="client">Client</SelectItem>
+                  <SelectItem value="closed-won">Closed Won</SelectItem>
+                  <SelectItem value="closed-lost">Closed Lost</SelectItem>
+                  <SelectItem value="manual">Manual</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-[#64748b] mt-1">Pick &quot;Manual&quot; to record a call outcome, then describe what happened in Notes below.</p>
             </div>
             <div><Label>Reason / Description</Label><Textarea value={newLead.reason} onChange={(e) => setNewLead({ ...newLead, reason: e.target.value })} placeholder="Why this lead? What's the opportunity or context..." rows={2} /></div>
             <div><Label>Notes</Label><Textarea value={newLead.notes} onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })} placeholder="Additional notes..." rows={3} /></div>
