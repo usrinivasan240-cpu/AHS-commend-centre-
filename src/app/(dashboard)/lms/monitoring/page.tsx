@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, Award, Loader2, Users } from "lucide-react";
+import { Activity, Award, Loader2, RefreshCw, RotateCcw, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth-context";
-import { LMS_COURSE_ID, lmsGet } from "@/lib/lms/client";
+import { LMS_COURSE_ID, lmsGet, lmsPost } from "@/lib/lms/client";
 
 type Doc = Record<string, any>;
 
@@ -33,6 +34,11 @@ export default function MonitoringPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [feed, setFeed] = useState<Doc[]>([]);
+  const [feedOn, setFeedOn] = useState(true);
+  const [resetTarget, setResetTarget] = useState<Doc | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     if (!actorEmail) return;
@@ -52,6 +58,40 @@ export default function MonitoringPage() {
   }, [actorEmail]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadFeed = useCallback(async () => {
+    if (!actorEmail) return;
+    try {
+      const f = await lmsGet<Doc>("/api/lms/events", actorEmail, { courseId: LMS_COURSE_ID, limit: "50" });
+      setFeed(f.events || []);
+    } catch {
+      // feed is best-effort; keep last known items
+    }
+  }, [actorEmail]);
+
+  useEffect(() => {
+    loadFeed();
+    if (!feedOn) return;
+    const t = setInterval(loadFeed, 15000);
+    return () => clearInterval(t);
+  }, [loadFeed, feedOn]);
+
+  const handleReset = async () => {
+    if (!resetTarget) return;
+    setResetting(true);
+    setNotice("");
+    try {
+      const r = await lmsPost<Doc>("/api/lms/attempts", { actorEmail, action: "reset", attemptId: resetTarget.id });
+      setNotice(`Reset ${r.reset ?? 0} attempt(s) for ${resetTarget.studentEmail} · ${resetTarget.testId}.`);
+      setResetTarget(null);
+      if (selected === resetTarget.id) { setSelected(null); setEvents([]); }
+      await load();
+      await loadFeed();
+    } catch (e: any) {
+      setNotice(e.message || "Reset failed");
+    }
+    setResetting(false);
+  };
 
   const loadEvents = async (attemptId: string) => {
     setSelected(attemptId);
@@ -123,6 +163,9 @@ export default function MonitoringPage() {
       {error && (
         <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-3 text-sm text-[#ef4444]">{error}</div>
       )}
+      {notice && (
+        <div className="rounded-lg border border-[#0066ff]/30 bg-[#0066ff]/10 p-3 text-sm text-white">{notice}</div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map(([label, value]) => (
@@ -150,6 +193,39 @@ export default function MonitoringPage() {
         </CardContent>
       </Card>
 
+      <Card className="border-[#1e293b] bg-[#0f172a]">
+        <CardContent className="p-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+              <span className={`inline-block h-2 w-2 rounded-full ${feedOn ? "bg-emerald-400 animate-pulse" : "bg-[#64748b]"}`} />
+              Live student feed
+              <span className="text-xs font-normal text-[#64748b]">{feedOn ? "auto-refresh 15s" : "paused"}</span>
+            </h3>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="outline" onClick={loadFeed} title="Refresh now">
+                <RefreshCw className="mr-1 h-3 w-3" /> Refresh
+              </Button>
+              <Button size="sm" variant={feedOn ? "default" : "outline"} onClick={() => setFeedOn((v) => !v)}>
+                {feedOn ? "Pause" : "Resume"}
+              </Button>
+            </div>
+          </div>
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {feed.map((e: Doc) => (
+              <div key={e.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-1.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Badge variant={KIND_VARIANT[e.kind] || "secondary"} className="shrink-0 text-[10px]">{e.kind}</Badge>
+                  <span className="truncate text-xs text-white">{e.studentEmail || "—"}</span>
+                  <span className="shrink-0 text-[11px] text-[#64748b]">{e.testId || ""}</span>
+                </div>
+                <span className="shrink-0 text-[11px] text-[#64748b]">{e.at || e.timestamp || ""}</span>
+              </div>
+            ))}
+            {feed.length === 0 && <p className="text-sm text-[#64748b]">No activity yet.</p>}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="border-[#1e293b] bg-[#0f172a]">
           <CardContent className="p-4 space-y-2">
@@ -165,9 +241,20 @@ export default function MonitoringPage() {
                     </p>
                   )}
                 </div>
-                <Button size="sm" variant={selected === a.id ? "default" : "outline"} onClick={() => loadEvents(a.id)}>
-                  <Activity className="mr-1 h-3 w-3" /> Activity
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button size="sm" variant={selected === a.id ? "default" : "outline"} onClick={() => loadEvents(a.id)}>
+                    <Activity className="mr-1 h-3 w-3" /> Activity
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-[#ef4444]/40 text-[#ef4444] hover:bg-[#ef4444]/10"
+                    title="Reset this attempt (clears answers, score and pass flag)"
+                    onClick={() => { setResetTarget(a); setNotice(""); }}
+                  >
+                    <RotateCcw className="mr-1 h-3 w-3" /> Reset
+                  </Button>
+                </div>
               </div>
             ))}
             {attempts.length === 0 && <p className="text-sm text-[#64748b]">No attempts yet.</p>}
@@ -203,6 +290,31 @@ export default function MonitoringPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={!!resetTarget} onOpenChange={(o) => { if (!o) setResetTarget(null); }}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white">Reset attempt?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[#94a3b8]">
+            This clears answers, score and pass flag for{" "}
+            <span className="font-medium text-white">{resetTarget?.studentEmail}</span> ·{" "}
+            <span className="font-medium text-white">{resetTarget?.testId}</span>. The student can start fresh.
+            This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetTarget(null)} disabled={resetting}>Cancel</Button>
+            <Button
+              className="bg-[#ef4444] hover:bg-[#dc2626] text-white"
+              onClick={handleReset}
+              disabled={resetting}
+            >
+              {resetting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+              Reset attempt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

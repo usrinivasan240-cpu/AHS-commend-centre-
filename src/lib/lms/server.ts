@@ -242,6 +242,7 @@ export type AuditAction =
   | "TEST_SUBMITTED"
   | "MARKS_UPDATED"
   | "FEEDBACK_ADDED"
+  | "TEST_ATTEMPT_RESET"
   | "CERTIFICATE_ISSUED";
 
 /** Append an audit log entry (master AUDIT LOG spec). */

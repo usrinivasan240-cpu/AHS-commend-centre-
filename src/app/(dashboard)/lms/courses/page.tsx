@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, Loader2, MessageSquareCheck, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,6 +41,8 @@ export default function CoursesManagePage() {
   const [editTest, setEditTest] = useState<Doc | null>(null);
   const [testForm, setTestForm] = useState<Doc>({});
   const [newQ, setNewQ] = useState({ kind: "mcq", prompt: "", options: "", answerKeys: "", points: "5" });
+  const [quickAdd, setQuickAdd] = useState(false);
+  const newQPromptRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
     if (!actorEmail) return;
@@ -120,6 +122,25 @@ export default function CoursesManagePage() {
     setNewQ({ kind: "mcq", prompt: "", options: "", answerKeys: "", points: "5" });
   };
 
+  const openTestEditorForAdd = (t: Doc) => {
+    openTestEditor(t);
+    setQuickAdd(true);
+  };
+
+  const closeTestEditor = () => {
+    setEditTest(null);
+    setQuickAdd(false);
+  };
+
+  useEffect(() => {
+    if (editTest && quickAdd && newQPromptRef.current) {
+      const el = newQPromptRef.current;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const timer = setTimeout(() => el.focus({ preventScroll: true }), 350);
+      return () => clearTimeout(timer);
+    }
+  }, [editTest, quickAdd]);
+
   const saveTest = async () => {
     if (!editTest) return;
     setSaving(true);
@@ -139,7 +160,7 @@ export default function CoursesManagePage() {
       };
       await lmsPost("/api/lms/content", { actorEmail, kind: "tests", doc });
       patchTree("tests", editTest.id, doc);
-      setEditTest(null);
+      closeTestEditor();
     } catch (e: any) {
       setError(e.message);
     }
@@ -213,6 +234,11 @@ export default function CoursesManagePage() {
                           <Pencil className="mr-1 h-3 w-3" /> Edit test
                         </Button>
                       )}
+                      {kind === "tests" && (
+                        <Button size="sm" variant="outline" onClick={() => openTestEditorForAdd(d)}>
+                          <Plus className="mr-1 h-3 w-3" /> Add question
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => toggleStatus(kind, d)}>
                         {d.status === "published" ? <><EyeOff className="mr-1 h-3 w-3" /> Unpublish</> : <><Eye className="mr-1 h-3 w-3" /> Publish</>}
                       </Button>
@@ -282,7 +308,7 @@ export default function CoursesManagePage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editTest} onOpenChange={(o) => { if (!o) setEditTest(null); }}>
+      <Dialog open={!!editTest} onOpenChange={(o) => { if (!o) closeTestEditor(); }}>
         <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-white">Edit test — {editTest?.id}</DialogTitle>
@@ -342,7 +368,7 @@ export default function CoursesManagePage() {
                 ))}
               </div>
             </div>
-            <div className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3 space-y-2">
+            <div className={`rounded-lg border p-3 space-y-2 ${quickAdd ? "border-[#0066ff]/60 bg-[#0066ff]/5 ring-1 ring-[#0066ff]/40" : "border-[#1e293b] bg-[#0a0f1e]"}`}>
               <p className="text-xs font-semibold text-white flex items-center gap-1"><Plus className="h-3 w-3" /> Add question</p>
               <div className="grid grid-cols-2 gap-2">
                 <Select value={newQ.kind} onValueChange={(v) => setNewQ((q) => ({ ...q, kind: v }))}>
@@ -356,7 +382,7 @@ export default function CoursesManagePage() {
                 </Select>
                 <Input value={newQ.points} onChange={(e) => setNewQ((q) => ({ ...q, points: e.target.value }))} type="number" min={1} placeholder="Points" className="border-[#1e293b] bg-[#0f172a]" />
               </div>
-              <Textarea value={newQ.prompt} onChange={(e) => setNewQ((q) => ({ ...q, prompt: e.target.value }))} rows={2} placeholder="Question prompt..." className="border-[#1e293b] bg-[#0f172a]" />
+              <Textarea ref={newQPromptRef} value={newQ.prompt} onChange={(e) => setNewQ((q) => ({ ...q, prompt: e.target.value }))} rows={2} placeholder="Question prompt..." className="border-[#1e293b] bg-[#0f172a]" />
               {(newQ.kind === "mcq" || newQ.kind === "msq") && (
                 <Textarea value={newQ.options} onChange={(e) => setNewQ((q) => ({ ...q, options: e.target.value }))} rows={3} placeholder="Options, one per line..." className="border-[#1e293b] bg-[#0f172a]" />
               )}
@@ -367,7 +393,7 @@ export default function CoursesManagePage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTest(null)}>Cancel</Button>
+            <Button variant="outline" onClick={closeTestEditor}>Cancel</Button>
             <Button onClick={saveTest} disabled={saving} className="bg-[#0066ff] hover:bg-[#0052cc] text-white">
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save test"}
             </Button>

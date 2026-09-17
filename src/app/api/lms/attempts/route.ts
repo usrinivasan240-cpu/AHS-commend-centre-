@@ -212,6 +212,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, scorePercent, needsReview, passed, timeExpired, status: update.status });
     }
 
+    if (action === "reset") {
+      requireLmsRoles(actor, ["super-admin", "trainer"]);
+      const attemptId = String(body.attemptId || "");
+      const resetStudentEmail = String(body.studentEmail || "").toLowerCase();
+      const resetTestId = String(body.testId || "");
+      let targets: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      if (attemptId) {
+        const snap = await db.collection(COLLECTIONS.LMS_ATTEMPTS).doc(attemptId).get();
+        if (!snap.exists) return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
+        targets = [snap as unknown as FirebaseFirestore.QueryDocumentSnapshot];
+      } else if (resetStudentEmail && resetTestId) {
+        const snap = await db
+          .collection(COLLECTIONS.LMS_ATTEMPTS)
+          .where("testId", "==", resetTestId)
+          .where("studentEmail", "==", resetStudentEmail)
+          .get();
+        targets = snap.docs;
+        if (targets.length === 0) return NextResponse.json({ error: "No attempts found for this student + test" }, { status: 404 });
+      } else {
+        return NextResponse.json({ error: "Provide attemptId or studentEmail + testId" }, { status: 400 });
+      }
+      const affected = new Map<string, string>();
+      const batch = db.batch();
+      for (const d of targets) {
+        const a = d.data() as LmsAttempt;
+        affected.set(a.studentEmail, a.testId);
+        batch.delete(d.ref);
+      }
+      await batch.commit();
+      // Remove passed flags so the student can retake cleanly.
+      for (const [sEmail, tId] of affected) {
+        try {
+          const first = targets[0]?.data() as LmsAttempt | undefined;
+          const courseId = first?.courseId || "";
+          if (!courseId) continue;
+          const pRef = db.collection(COLLECTIONS.LMS_PROGRESS).doc(`${courseId}__${sEmail}`);
+          const pSnap = await pRef.get();
+          if (pSnap.exists) {
+            const p = pSnap.data() as LmsProgress;
+            const next = (p.passedTestIds || []).filter((id) => id !== tId);
+            await pRef.set({ passedTestIds: next, updatedAt: serverTimestamp() }, { merge: true });
+          }
+        } catch {
+          // best-effort
+        }
+      }
+      await auditLog(db, {
+        actorId: actor!.id,
+        actorRole: actor!.role,
+        action: "TEST_ATTEMPT_RESET",
+        targetType: "test_attempt",
+        targetId: attemptId || `${resetTestId}__${resetStudentEmail}`,
+        metadata: { count: targets.length, studentEmail: resetStudentEmail || undefined, testId: resetTestId || undefined },
+      });
+      return NextResponse.json({ ok: true, reset: targets.length });
+    }
+
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: any) {
     const msg = err?.message || "Attempt failed";

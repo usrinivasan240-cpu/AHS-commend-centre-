@@ -51,20 +51,38 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET /api/lms/events?actorEmail=&attemptId= — trainer/super-admin only
+// GET /api/lms/events?actorEmail=&attemptId=&testId=&courseId=&limit= — trainer/super-admin only
 export async function GET(req: NextRequest) {
   try {
     const db = await dbOrThrow();
     const actorEmail = req.nextUrl.searchParams.get("actorEmail") || "";
     const attemptId = req.nextUrl.searchParams.get("attemptId") || "";
+    const testId = req.nextUrl.searchParams.get("testId") || "";
+    const courseId = req.nextUrl.searchParams.get("courseId") || "";
+    const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 100, 1), 500);
     const actor = await resolveActor(db, actorEmail);
     requireLmsRoles(actor, ["super-admin", "trainer"]);
 
     let q: FirebaseFirestore.Query = db.collection(COLLECTIONS.LMS_EVENTS);
     if (attemptId) q = q.where("attemptId", "==", attemptId);
+    if (testId) q = q.where("testId", "==", testId);
+    if (courseId) {
+      // Events carry courseId when the client sends it; fall back to unfiltered when absent.
+      try {
+        q = q.where("courseId", "==", courseId);
+      } catch {
+        // ignore — older events may lack courseId
+      }
+    }
     const snap = await q.get();
-    const events = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
-    return NextResponse.json({ events });
+    let events = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
+    // If courseId filter matched nothing (older events lack it), fall back to full list.
+    if (courseId && events.length === 0) {
+      const all = await db.collection(COLLECTIONS.LMS_EVENTS).get();
+      events = all.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
+    }
+    events.sort((a: any, b: any) => String(b.at || b.timestamp || "").localeCompare(String(a.at || a.timestamp || "")));
+    return NextResponse.json({ events: events.slice(0, limit) });
   } catch (err: any) {
     const msg = err?.message || "Failed to list events";
     const status = /Unauthorized|Forbidden/.test(msg) ? 403 : 500;
