@@ -111,6 +111,18 @@ export default function LeadsPage() {
   }, [leadsError, apiLeads.length]);
   const leads = leadsError && apiLeads.length > 0 ? apiLeads : leadsLive;
   const loading = leadsError && apiLeads.length > 0 ? false : loadingLive;
+  // Dynamic sync: refresh the API-fallback list every 10s so assignments/status
+  // changes from super-admin appear on marketing logins without a page reload.
+  // (When client Firestore reads work, useFirestoreQuery is already live.)
+  useEffect(() => {
+    if (!leadsError) return;
+    const t = setInterval(() => {
+      fetch("/api/crm/lead").then((r) => r.json()).then((d) => {
+        if (Array.isArray(d.leads)) setApiLeads(d.leads);
+      }).catch(() => {});
+    }, 10000);
+    return () => clearInterval(t);
+  }, [leadsError]);
   const { add: addLead, update: updateLead, remove: removeLead } = useFirestoreActions(COLLECTIONS.LEADS);
   const { add: addTask } = useFirestoreActions(COLLECTIONS.TASKS);
 
@@ -178,23 +190,37 @@ export default function LeadsPage() {
     name: "", company: "", email: "", phone: "", source: "website", category: "", value: "", notes: "", reason: "", status: "new",
   });
 
+  // Role-visible leads: marketing users only see leads assigned to them (plus unassigned).
+  // Everything downstream (categories, counts, table) uses this so no other member's data leaks.
+  const visibleLeads = useMemo(() => {
+    if (!(isMarketingRole && currentUserId)) return [...leads];
+    return leads.filter((l: any) => {
+      // Match by assignedTo field (could be email or doc ID)
+      if (l.assignedTo === currentUserId) return true;
+      // Also check rawData for backward compatibility
+      if (l.rawData?.assignedTo === currentUserId) return true;
+      // Show leads with no assignment (unassigned) so marketing can see what's available
+      return !l.assignedTo && !l.rawData?.assignedTo;
+    });
+  }, [leads, isMarketingRole, currentUserId]);
+
   const allCategories = useMemo(() => {
     const cats = new Set<string>();
-    leads.forEach((l: any) => {
+    visibleLeads.forEach((l: any) => {
       if (l.category) cats.add(l.category);
       if (l.rawData?.category) cats.add(l.rawData.category);
     });
     return [...cats].sort();
-  }, [leads]);
+  }, [visibleLeads]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    leads.forEach((l: any) => {
+    visibleLeads.forEach((l: any) => {
       const cat = l.category || l.rawData?.category || "Uncategorized";
       counts[cat] = (counts[cat] || 0) + 1;
     });
     return counts;
-  }, [leads]);
+  }, [visibleLeads]);
 
   const handleDeleteAllLeads = async () => {
     setBulkDeleting(true);
@@ -223,18 +249,7 @@ export default function LeadsPage() {
   };
 
   const filteredLeads = useMemo(() => {
-    let result = [...leads];
-    // Role-based filtering: marketing users only see leads assigned to them
-    if (isMarketingRole && currentUserId) {
-      result = result.filter((l: any) => {
-        // Match by assignedTo field (could be email or doc ID)
-        if (l.assignedTo === currentUserId) return true;
-        // Also check rawData for backward compatibility
-        if (l.rawData?.assignedTo === currentUserId) return true;
-        // Show leads with no assignment (unassigned) so marketing can see what's available
-        return !l.assignedTo && !l.rawData?.assignedTo;
-      });
-    }
+    let result = [...visibleLeads];
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((l: any) => {
@@ -256,7 +271,7 @@ export default function LeadsPage() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return result;
-  }, [leads, search, statusFilter, categoryFilter, sortField, sortDir]);
+  }, [visibleLeads, search, statusFilter, categoryFilter, sortField, sortDir]);
 
   const detailIndex = useMemo(() => {
     if (!detailLead) return -1;
@@ -662,14 +677,16 @@ export default function LeadsPage() {
         </div>
         <div className="flex items-center gap-2">
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.pdf" className="hidden" onChange={handleImportExcel} />
-          <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing}>
-            {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-            {importing ? "Importing..." : "Import File (Excel/CSV/PDF → Tasks)"}
-          </Button>
+          {!isMarketingRole && (
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing}>
+              {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              {importing ? "Importing..." : "Import File (Excel/CSV/PDF → Tasks)"}
+            </Button>
+          )}
           <Button onClick={() => { setManualAddError(""); setDialogOpen(true); }} className="gap-2">
             <Plus className="h-4 w-4" /> Add Lead
           </Button>
-          {leads.length > 0 && (
+          {!isMarketingRole && leads.length > 0 && (
             <Button variant="outline" className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10 border-[#ef4444]/30"
               onClick={() => { setBulkDeleteType("all"); setBulkDeleteOpen(true); }}>
               <Trash2 className="mr-2 h-4 w-4" /> Remove All ({leads.length})
@@ -732,8 +749,8 @@ export default function LeadsPage() {
         </Select>
       </motion.div>
 
-      {/* Category-wise Remove */}
-      {allCategories.length > 0 && (
+      {/* Category-wise Remove (super-admin only) */}
+      {!isMarketingRole && allCategories.length > 0 && (
         <motion.div variants={fadeInUp}>
           <Card className="border-[#1e293b]">
             <CardContent className="p-4">
