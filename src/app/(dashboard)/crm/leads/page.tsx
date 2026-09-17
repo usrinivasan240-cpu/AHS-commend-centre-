@@ -131,7 +131,8 @@ export default function LeadsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<any>(null);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ added: number; merged: number; total: number; errors: string[]; tasksCreated?: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ added: number; merged: number; skipped?: number; total: number; errors: string[]; tasksCreated?: number } | null>(null);
+  const [manualAddError, setManualAddError] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
@@ -298,12 +299,30 @@ export default function LeadsPage() {
 
   const handleAddLead = async () => {
     if (!newLead.name && !newLead.company) return;
+    setManualAddError("");
+    // Global duplicate check against entire dataset (name, phone, or email match)
+    const dupName = normalizeName(newLead.name || newLead.company || "");
+    const dupPhone = String(newLead.phone || "").trim();
+    const dupEmail = String(newLead.email || "").toLowerCase().trim();
+    const dupe = (dupName || dupPhone || dupEmail) ? leads.find((l: any) => {
+      if (dupName && normalizeName(l.name) === dupName) return true;
+      if (dupPhone && String(l.phone || "").trim() === dupPhone) return true;
+      if (dupEmail && String(l.email || "").toLowerCase().trim() === dupEmail) return true;
+      return false;
+    }) : null;
+    if (dupe) {
+      setManualAddError(`This lead already exists in the dataset (${dupe.name || dupe.company || "unnamed lead"}). Not added again.`);
+      return;
+    }
     try {
+      // Marketing members auto-assign manual leads to themselves; admin leaves unassigned
+      const creatorEmail = isMarketingRole && currentUserId ? currentUserId : "";
       const payload = {
         name: newLead.name || newLead.company, company: newLead.company || newLead.name,
         email: newLead.email, phone: newLead.phone, source: newLead.source,
         category: newLead.category, status: "new", value: Number(newLead.value) || 0,
         notes: newLead.notes, reason: newLead.reason, rawData: { ...newLead },
+        ...(creatorEmail ? { assignedTo: creatorEmail, assignedAt: new Date().toISOString(), assignedByName: currentUser?.name || "Self" } : {}),
         createdAt: new Date().toISOString().split("T")[0],
       };
       try { await apiWrite("POST", { lead: payload }); }
@@ -501,7 +520,7 @@ export default function LeadsPage() {
       const assigneeName = assigneeMember?.name || selectedAssignee || "Unassigned";
       const assigneeEmail = assigneeMember?.email || selectedAssignee || "";
 
-      let added = 0, merged = 0, tasksCreated = 0;
+      let added = 0, merged = 0, skipped = 0, tasksCreated = 0;
       const errors: string[] = [];
 
       // Try server-side Admin SDK import with assignment
@@ -521,17 +540,17 @@ export default function LeadsPage() {
         try { data = JSON.parse(text); } catch {
           throw new Error(res.status === 404 || text.includes("<!DOCTYPE") ? "API not deployed" : "Non-JSON response");
         }
-        added = data.added || 0; merged = data.merged || 0; tasksCreated = data.tasksCreated || 0;
+        added = data.added || 0; merged = data.merged || 0; skipped = data.skipped || 0; tasksCreated = data.tasksCreated || 0;
         if (Array.isArray(data.errors)) errors.push(...data.errors);
-        if (res.ok && (added > 0 || merged > 0)) apiOk = true;
+        if (res.ok && (added > 0 || merged > 0 || skipped > 0)) apiOk = true;
         else if (!res.ok) errors.unshift("Server import failed — Admin SDK not configured on Vercel.");
       } catch (apiErr) {
         errors.push(`Import API unreachable: ${apiErr instanceof Error ? apiErr.message : String(apiErr)}`);
       }
 
-      // Client-SDK fallback
+      // Client-SDK fallback (global skip-duplicates against entire dataset)
       if (!apiOk) {
-        let fbAdded = 0, fbMerged = 0, fbTasks = 0;
+        let fbAdded = 0, fbSkipped = 0, fbTasks = 0;
         for (const item of pendingImportItems) {
           try {
             const found = leads.find((l: any) => {
@@ -540,15 +559,10 @@ export default function LeadsPage() {
               if (item.mergeKey.email && String(l.email || "").toLowerCase().trim() === item.mergeKey.email) return true;
               return false;
             });
-            let lid: string;
+            if (found) { fbSkipped++; continue; }
             const assignmentFields = assigneeEmail ? { assignedTo: assigneeEmail, assignedAt: new Date().toISOString(), assignedByName: assigneeName } : {};
-            if (found) {
-              await updateLead(found.id, { rawData: { ...(found.rawData || {}), ...(item.lead.rawData || {}) }, ...assignmentFields, updatedAt: new Date().toISOString() });
-              lid = found.id; fbMerged++;
-            } else {
-              lid = await addLead({ ...item.lead, ...assignmentFields, updatedAt: new Date().toISOString() });
-              fbAdded++;
-            }
+            const lid = await addLead({ ...item.lead, ...assignmentFields, updatedAt: new Date().toISOString() });
+            fbAdded++;
             try {
               await addTask({
                 ...item.task,
@@ -562,12 +576,12 @@ export default function LeadsPage() {
             errors.push(`${item.rowLabel}: ${rowErr?.message || "write failed"}`);
           }
         }
-        added += fbAdded; merged += fbMerged; tasksCreated += fbTasks;
+        added += fbAdded; skipped += fbSkipped; tasksCreated += fbTasks;
       }
 
       const suffix = tasksCreated > 0 ? `, ${tasksCreated} tasks created` : "";
       setImportResult({
-        added, merged, total: added + merged, errors,
+        added, merged, skipped, total: added + merged, errors,
         tasksCreated,
       });
     } catch (err) {
@@ -651,7 +665,7 @@ export default function LeadsPage() {
             {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
             {importing ? "Importing..." : "Import File (Excel/CSV/PDF → Tasks)"}
           </Button>
-          <Button onClick={() => setDialogOpen(true)} className="gap-2">
+          <Button onClick={() => { setManualAddError(""); setDialogOpen(true); }} className="gap-2">
             <Plus className="h-4 w-4" /> Add Lead
           </Button>
           {leads.length > 0 && (
@@ -672,7 +686,7 @@ export default function LeadsPage() {
                 <div className="flex items-center gap-3">
                   {importResult.errors.length > 0 ? <AlertTriangle className="h-5 w-5 text-[#f59e0b]" /> : <CheckCircle className="h-5 w-5 text-[#10b981]" />}
                   <div>
-                    <p className="text-sm font-medium text-white">Import Complete: {importResult.added} new, {importResult.merged} merged ({importResult.total} total){(importResult.tasksCreated ?? 0) > 0 ? `, ${importResult.tasksCreated} tasks created` : ""}</p>
+                    <p className="text-sm font-medium text-white">Import Complete: {importResult.added} new, {(importResult.skipped ?? 0) > 0 ? `${importResult.skipped} skipped (already exists), ` : ""}{importResult.merged} merged ({importResult.total} total){(importResult.tasksCreated ?? 0) > 0 ? `, ${importResult.tasksCreated} tasks created` : ""}</p>
                     {importResult.errors.length > 0 && (
                       <p className="text-xs text-[#f59e0b] mt-1">
                         {importResult.errors.length} warnings: {importResult.errors.slice(0, 3).join("; ")}
@@ -872,6 +886,7 @@ export default function LeadsPage() {
                     <SelectItem value="excel-import">Excel Import</SelectItem>
                     <SelectItem value="cold-outreach">Cold Outreach</SelectItem>
                     <SelectItem value="social-media">Social Media</SelectItem>
+                    <SelectItem value="manual-entry">Manual Entry</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -879,9 +894,14 @@ export default function LeadsPage() {
             </div>
             <div><Label>Reason / Description</Label><Textarea value={newLead.reason} onChange={(e) => setNewLead({ ...newLead, reason: e.target.value })} placeholder="Why this lead? What's the opportunity or context..." rows={2} /></div>
             <div><Label>Notes</Label><Textarea value={newLead.notes} onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })} placeholder="Additional notes..." rows={3} /></div>
+            {manualAddError && (
+              <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-3">
+                <p className="text-xs text-[#ef4444]">{manualAddError}</p>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setManualAddError(""); setDialogOpen(false); }}>Cancel</Button>
             <Button onClick={handleAddLead}>Add Lead</Button>
           </DialogFooter>
         </DialogContent>
