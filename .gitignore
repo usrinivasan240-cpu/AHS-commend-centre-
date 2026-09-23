@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# email campaign secrets must never be committed; keep the documented example committable
+.env.local
+!.env.email.example
 
 # Firebase service account keys
 web token .json

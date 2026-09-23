@@ -19,17 +19,19 @@ const ALL_PERMISSIONS = [
   "System Settings",
   "View Audit Logs",
   "Manage Notifications",
+  "Manage Email Campaigns",
+  "View Email Campaigns",
 ];
 
 const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   "super-admin": [...ALL_PERMISSIONS],
-  "core-admin": ["View Dashboard", "Manage Members", "Create Teams", "Manage Projects", "View Reports", "Manage Clients", "Manage Leads", "View Finance", "Manage Courses", "Schedule Assessments", "View AI Insights", "Manage Notifications"],
-  "team-lead": ["View Dashboard", "Manage Members", "Manage Projects", "View Reports", "Manage Courses", "Schedule Assessments", "View AI Insights"],
+  "core-admin": ["View Dashboard", "Manage Members", "Create Teams", "Manage Projects", "View Reports", "Manage Clients", "Manage Leads", "View Finance", "Manage Courses", "Schedule Assessments", "View AI Insights", "Manage Notifications", "Manage Email Campaigns", "View Email Campaigns"],
+  "team-lead": ["View Dashboard", "Manage Members", "Manage Projects", "View Reports", "Manage Courses", "Schedule Assessments", "View AI Insights", "View Email Campaigns"],
   "developer": ["View Dashboard", "View Reports", "Manage Projects", "View AI Insights"],
   "intern": ["View Dashboard", "View Reports", "Manage Courses", "View AI Insights"],
   "trainee": ["View Dashboard", "View Reports", "Manage Courses"],
   "client": ["View Dashboard", "View Reports"],
-  "marketing": ["View Dashboard", "Manage Leads", "Manage Clients", "View Reports", "View AI Insights", "Manage Notifications"],
+  "marketing": ["View Dashboard", "Manage Leads", "Manage Clients", "View Reports", "View AI Insights", "Manage Notifications", "View Email Campaigns"],
   "trainer": ["View Dashboard", "View Reports", "Teach Courses", "Monitor Tests", "Manage Notifications"],
   "student": ["View Dashboard", "Learn Courses"],
 };
@@ -119,6 +121,15 @@ export function canAccessRoute(role: string, pathname: string): boolean {
     "/analytics": ["View Reports"],
     "/notifications": ["View Audit Logs", "Manage Notifications"],
     "/settings": ["System Settings"],
+    "/email-campaigns": ["View Email Campaigns", "Manage Email Campaigns"],
+    "/email-campaigns/campaigns": ["View Email Campaigns", "Manage Email Campaigns"],
+    "/email-campaigns/create": ["Manage Email Campaigns"],
+    "/email-campaigns/upload": ["Manage Email Campaigns"],
+    "/email-campaigns/queue": ["View Email Campaigns", "Manage Email Campaigns"],
+    "/email-campaigns/sent": ["View Email Campaigns", "Manage Email Campaigns"],
+    "/email-campaigns/replies": ["View Email Campaigns", "Manage Email Campaigns"],
+    "/email-campaigns/suppression": ["Manage Email Campaigns"],
+    "/email-campaigns/analytics": ["View Email Campaigns", "Manage Email Campaigns"],
   };
 
   for (const [route, permissions] of Object.entries(routePermissionMap)) {

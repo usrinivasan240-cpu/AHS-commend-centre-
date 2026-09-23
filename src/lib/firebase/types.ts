@@ -25,6 +25,10 @@ export const COLLECTIONS = {
   LMS_PROGRESS: "lms_progress",
   LMS_PROJECTS: "lms_projects",
   LMS_CERTIFICATES: "lms_certificates",
+  EMAIL_CAMPAIGNS: "email_campaigns",
+  EMAIL_CAMPAIGN_RECIPIENTS: "email_campaign_recipients",
+  EMAIL_SUPPRESSION_LIST: "email_suppression_list",
+  EMAIL_CAMPAIGN_EVENTS: "email_campaign_events",
 } as const;
 
 export type FirestoreUser = {

@@ -1,0 +1,7 @@
+export const EMAIL_CAMPAIGN_CONSTANTS = {
+  MAX_FILE_SIZE_BYTES: 5 * 1024 * 1024,
+  MAX_ROWS: 5000,
+  DEFAULT_RATE_LIMIT_PER_MINUTE: 30,
+  BATCH_SIZE: 10,
+  ALLOWED_EXTENSIONS: [".xlsx", ".xls", ".csv"],
+} as const;
