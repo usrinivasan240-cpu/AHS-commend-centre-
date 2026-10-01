@@ -107,10 +107,10 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
 
   const [profile, setProfile] = useState({
-    name: "Sri Admin",
-    email: "sriadmin@ahs.com",
-    role: "Super Admin",
-    bio: "Founder & CEO of AHS. Building the future of startup operations.",
+    name: "",
+    email: "",
+    role: "",
+    bio: "",
   });
 
   const [company, setCompany] = useState({

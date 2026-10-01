@@ -36,9 +36,13 @@ yarn-error.log*
 .env.local
 !.env.email.example
 
-# Firebase service account keys
-web token .json
+# Firebase service account keys — never commit
+serviceAccountKey.json
+firebase-adminsdk.json
 *-firebase-adminsdk*.json
+web token .json
+web token*.json
+*serviceAccount*.json
 
 # vercel
 .vercel

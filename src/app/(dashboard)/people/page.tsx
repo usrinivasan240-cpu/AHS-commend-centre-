@@ -8,7 +8,6 @@ import {
   Plus,
   MoreHorizontal,
   Eye,
-  EyeOff,
   Pencil,
   Trash2,
   ArrowUpDown,
@@ -143,12 +142,6 @@ export default function PeoplePage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [userPassword, setUserPassword] = useState("");
-  const [showUserPassword, setShowUserPassword] = useState(false);
-  const [editUserPassword, setEditUserPassword] = useState("");
-  const [showEditPassword, setShowEditPassword] = useState(false);
 
   const { data: firestoreMembers, loading } = useFirestoreQuery(COLLECTIONS.USERS);
 
@@ -202,11 +195,9 @@ export default function PeoplePage() {
   };
 
   const handleAddMember = async () => {
-    if (adminPassword !== "sriadmin@777") {
-      setError("Incorrect admin password.");
-      setSaving(false);
-      return;
-    }
+    // Access to this page is already gated by PermissionGuard (Manage Members).
+    // Do not store passwords in Firestore — create the login in Firebase
+    // Authentication and keep only the profile here.
     if (!form.name || !form.email || !form.role) {
       setError("Name, email, and role are required.");
       return;
@@ -225,12 +216,9 @@ export default function PeoplePage() {
         status: form.status,
         performanceScore: 0,
         avatar: null,
-        password: userPassword || null,
       });
       setAddOpen(false);
       setForm(emptyForm);
-      setAdminPassword("");
-      setUserPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add member");
     } finally {
@@ -272,13 +260,9 @@ export default function PeoplePage() {
         joinDate: editForm.joinDate,
         status: editForm.status,
       };
-      if (editUserPassword) {
-        updateData.password = editUserPassword;
-      }
       await firestoreUpdate(COLLECTIONS.USERS, selectedMember.id, updateData);
       setEditOpen(false);
       setSelectedMember(null);
-      setEditUserPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update member");
     } finally {
@@ -670,51 +654,11 @@ export default function PeoplePage() {
                   onChange={(e) => setForm({ ...form, skills: e.target.value })}
                 />
               </div>
-
-              <div className="space-y-2">
-                <Label className="text-foreground">Login Password for User</Label>
-                <div className="relative">
-                  <Input
-                    type={showUserPassword ? "text" : "password"}
-                    placeholder="Set password for this user to login"
-                    value={userPassword}
-                    onChange={(e) => setUserPassword(e.target.value)}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowUserPassword(!showUserPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
-                  >
-                    {showUserPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <p className="text-xs text-muted">User can login with this email + password</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-foreground">Admin Password *</Label>
-              <div className="relative">
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter admin password to confirm"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
+              <p className="text-xs text-muted">After adding, create the login for this email in Firebase Authentication.</p>
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); setAdminPassword(""); }}>
+              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); }}>
                 Cancel
               </Button>
               <Button onClick={handleAddMember} loading={saving}>
@@ -833,27 +777,6 @@ export default function PeoplePage() {
                   value={editForm.skills}
                   onChange={(e) => setEditForm({ ...editForm, skills: e.target.value })}
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-foreground">Change Password</Label>
-                <div className="relative">
-                  <Input
-                    type={showEditPassword ? "text" : "password"}
-                    placeholder="Leave blank to keep current password"
-                    value={editUserPassword}
-                    onChange={(e) => setEditUserPassword(e.target.value)}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowEditPassword(!showEditPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
-                  >
-                    {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <p className="text-xs text-muted">Leave empty to keep existing password</p>
               </div>
             </div>
 

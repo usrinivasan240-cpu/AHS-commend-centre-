@@ -1,19 +1,45 @@
-import { initializeApp, cert } from "firebase-admin/app";
+import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 
-const serviceAccount = JSON.parse(
-  readFileSync(resolve(__dirname, "../web token .json"), "utf-8")
-);
+function loadServiceAccount() {
+  const override = process.env.FIREBASE_ADMIN_KEY_PATH;
+  const candidates = [
+    override || "",
+    join(process.cwd(), "serviceAccountKey.json"),
+    join(process.cwd(), "firebase-adminsdk.json"),
+  ].filter(Boolean) as string[];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) {
+        const parsed = JSON.parse(readFileSync(p, "utf-8"));
+        if (parsed.private_key && parsed.client_email) return parsed;
+      }
+    } catch {}
+  }
+  const key = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
+  const email = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  if (key && email) {
+    return {
+      project_id: projectId,
+      client_email: email,
+      private_key: key.replace(/\\n/g, "\n"),
+    };
+  }
+  throw new Error(
+    "Firebase Admin credentials missing. Set FIREBASE_ADMIN_PRIVATE_KEY + FIREBASE_ADMIN_CLIENT_EMAIL (+FIREBASE_ADMIN_PROJECT_ID), or provide serviceAccountKey.json (dev only, gitignored)."
+  );
+}
 
-const app = initializeApp({
-  credential: cert(serviceAccount),
-});
-
+const app = initializeApp({ credential: cert(loadServiceAccount() as never) });
 const db = getFirestore(app);
 
-const COLLECTIONS = {
+// NOTE: seed data intentionally omits passwords. Create matching users in
+// Firebase Authentication (email/password or Google) and store only
+// { name, email, role, team, status, ... } in the `users` collection.
+const COLLECTIONS: Record<string, Array<Record<string, unknown>>> = {
   users: [
     { name: "Arjun Krishnamurthy", email: "arjun@ahs.dev", role: "super-admin", team: "Core", status: "active", performanceScore: 95, joinDate: "2024-01-15", skills: ["Leadership", "Strategy", "Full Stack"] },
     { name: "Priya Venkatesh", email: "priya@ahs.dev", role: "core-admin", team: "Core", status: "active", performanceScore: 88, joinDate: "2024-02-01", skills: ["Project Management", "React", "Node.js"] },
@@ -44,7 +70,7 @@ const COLLECTIONS = {
   ],
   tasks: [
     { projectId: "", title: "Design system setup", status: "completed", priority: "high", assigneeId: "", dueDate: "2024-07-01", description: "Create design tokens and component library" },
-    { projectId: "", title: "Authentication module", status: "completed", priority: "critical", assigneeId: "", dueDate: "2024-07-15", description: "Implement Clerk auth with RBAC" },
+    { projectId: "", title: "Authentication module", status: "completed", priority: "critical", assigneeId: "", dueDate: "2024-07-15", description: "Implement auth with RBAC" },
     { projectId: "", title: "Dashboard widgets", status: "in-progress", priority: "high", assigneeId: "", dueDate: "2024-08-15", description: "Build all dashboard components" },
     { projectId: "", title: "People module", status: "in-progress", priority: "high", assigneeId: "", dueDate: "2024-08-30", description: "Member management and team features" },
     { projectId: "", title: "Learning module", status: "todo", priority: "medium", assigneeId: "", dueDate: "2024-09-15", description: "LMS with courses and assignments" },
@@ -103,11 +129,9 @@ async function seedCollection(collectionName: string, data: Record<string, unkno
 
 async function main() {
   console.log("Starting Firestore seed...\n");
-
   for (const [collectionName, data] of Object.entries(COLLECTIONS)) {
     await seedCollection(collectionName, data);
   }
-
   console.log("\nSeeding complete!");
   process.exit(0);
 }

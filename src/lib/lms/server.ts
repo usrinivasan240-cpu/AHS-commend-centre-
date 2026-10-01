@@ -20,8 +20,15 @@ export type LmsActor = {
 
 type AdminDb = Firestore;
 
-/** Hardcoded super-admin (mirrors src/lib/auth-context.tsx). No users doc exists for this login. */
-const HARDCODED_ADMIN_EMAIL = "sriadmin@ahs.com";
+/** Super-admin addresses from env (comma-separated). Never hardcode in source. */
+function envSuperAdmins(): string[] {
+  return String(
+    process.env.SUPER_ADMIN_EMAILS || process.env.NEXT_PUBLIC_BOOTSTRAP_ADMIN_EMAIL || ""
+  )
+    .split(",")
+    .map((s) => s.toLowerCase().trim())
+    .filter(Boolean);
+}
 
 /** Resolve actorEmail -> users doc. All LMS API routes must call this first. */
 export async function resolveActor(
@@ -30,9 +37,9 @@ export async function resolveActor(
 ): Promise<LmsActor | null> {
   const email = String(actorEmail || "").toLowerCase().trim();
   if (!email) return null;
-  // Hardcoded admin fallback: auth-context logs this user in without a users doc.
-  if (email === HARDCODED_ADMIN_EMAIL) {
-    return { id: "hardcoded-admin", name: "Admin User", email, role: "super-admin" };
+  // Env-configured super-admin fallback (for bootstrap before users doc exists).
+  if (envSuperAdmins().includes(email)) {
+    return { id: "env-admin", name: "Admin User", email, role: "super-admin" };
   }
   const snap = await db
     .collection(COLLECTIONS.USERS)

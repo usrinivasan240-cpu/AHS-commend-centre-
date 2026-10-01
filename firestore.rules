@@ -1,8 +1,32 @@
 ﻿rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default deny. All reads/writes go through AdminSDK API routes which
+    // enforce role checks in src/lib/server-auth.ts. Direct client SDK access
+    // is limited to authenticated reads of non-sensitive docs below.
+    // Deploy with: firebase deploy --only firestore:rules
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Users: authenticated users may read their own doc only.
+    // Never allow client reads of other users (contains roles) or any writes
+    // (prevents privilege escalation + plaintext password writes).
+    match /users/{userId} {
+      allow get: if signedIn() && resource.data.email == request.auth.token.email;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // Everything else: deny direct client access. Use /api/* (AdminSDK).
+    // Narrow exceptions can be added per-collection, e.g.:
+    // match /lms_courses/{id} {
+    //   allow get, list: if signedIn();
+    //   allow create, update, delete: if false;
+    // }
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

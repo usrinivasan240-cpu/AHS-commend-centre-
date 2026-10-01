@@ -29,6 +29,7 @@ export const COLLECTIONS = {
   EMAIL_CAMPAIGN_RECIPIENTS: "email_campaign_recipients",
   EMAIL_SUPPRESSION_LIST: "email_suppression_list",
   EMAIL_CAMPAIGN_EVENTS: "email_campaign_events",
+  ROLE_PAGE_ACCESS: "role_page_access",
 } as const;
 
 export type FirestoreUser = {
@@ -43,7 +44,9 @@ export type FirestoreUser = {
   joinDate: string;
   skills: string[];
   phone?: string;
-  password?: string;
+  // NOTE: passwords must live in Firebase Authentication, never in Firestore.
+  // The field is intentionally absent. Any legacy `password` in existing docs
+  // must be deleted via migration script.
   createdAt?: Date;
 };
 

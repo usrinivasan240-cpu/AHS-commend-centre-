@@ -115,6 +115,18 @@ export class GenericApiProvider implements EmailProvider {
 export function getEmailProvider(): EmailProvider {
   const provider = (process.env.EMAIL_PROVIDER || "").toLowerCase();
   const testMode = process.env.EMAIL_TEST_MODE === "true";
+  // Safety: in production, never silently use mock/console. Fail closed so
+  // misconfiguration is visible instead of marking emails SENT without sending.
+  if (process.env.NODE_ENV === "production") {
+    if (!provider || provider === "mock") {
+      throw new Error(
+        "EMAIL_PROVIDER must be 'smtp' or 'api' in production (mock is dev-only). Set EMAIL_PROVIDER + credentials."
+      );
+    }
+    if (testMode) {
+      console.warn("[email] EMAIL_TEST_MODE=true in production — emails are logged, not delivered.");
+    }
+  }
   if (testMode) return new ConsoleProvider();
   switch (provider) {
     case "smtp":
@@ -124,8 +136,15 @@ export function getEmailProvider(): EmailProvider {
     case "api":
       return new GenericApiProvider();
     case "mock":
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("EMAIL_PROVIDER=mock is not allowed in production.");
+      }
+      return new MockProvider();
     default:
-      if (!provider || provider === "") return new MockProvider();
+      // Dev default: mock so local work never sends real mail.
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("EMAIL_PROVIDER is not set. Set EMAIL_PROVIDER=smtp|api in production.");
+      }
       return new MockProvider();
   }
 }

@@ -1,3 +1,5 @@
+import { getRolePageOverride, resolvePageHref } from "./page-access";
+
 const ALL_PERMISSIONS = [
   "View Dashboard",
   "Manage Members",
@@ -68,7 +70,7 @@ export function filterNavigationByRole(
   navigation: NavItem[],
   role: string
 ): NavItem[] {
-  return navigation
+  const base = navigation
     .map((item) => {
       if (item.permission && !hasPermission(role, item.permission)) {
         return null;
@@ -83,6 +85,32 @@ export function filterNavigationByRole(
       }
 
       return item;
+    })
+    .filter(Boolean) as NavItem[];
+
+  // Explicit per-role page workflow (set by admin on /people/roles) wins over
+  // permission-derived visibility. super-admin is never restricted (no lockout).
+  if (role === "super-admin") return base;
+  const override = getRolePageOverride(role);
+  if (!override) return base;
+
+  const isAllowedHref = (href: string) => {
+    const resolved = resolvePageHref(href) ?? href;
+    return override.includes(resolved);
+  };
+
+  return base
+    .map((item) => {
+      if (item.children) {
+        const visibleChildren = item.children.filter((child) =>
+          isAllowedHref(child.href)
+        );
+        // Keep the section if any child page is allowed, or the section
+        // landing page itself was explicitly allowed.
+        if (visibleChildren.length === 0 && !isAllowedHref(item.href)) return null;
+        return { ...item, children: visibleChildren };
+      }
+      return isAllowedHref(item.href) ? item : null;
     })
     .filter(Boolean) as NavItem[];
 }
@@ -131,6 +159,17 @@ export function canAccessRoute(role: string, pathname: string): boolean {
     "/email-campaigns/suppression": ["Manage Email Campaigns"],
     "/email-campaigns/analytics": ["View Email Campaigns", "Manage Email Campaigns"],
   };
+
+  // Explicit page workflow (admin-set on /people/roles) is authoritative for
+  // UI routes. super-admin is never restricted (prevents lockout). Unknown
+  // paths (APIs, login) fall through to permission logic below.
+  if (role !== "super-admin") {
+    const override = getRolePageOverride(role);
+    if (override) {
+      const resolved = resolvePageHref(pathname);
+      if (resolved) return override.includes(resolved);
+    }
+  }
 
   for (const [route, permissions] of Object.entries(routePermissionMap)) {
     if (pathname === route || pathname.startsWith(route + "/")) {
