@@ -58,7 +58,7 @@ export default function LearnPage() {
   const [startError, setStartError] = useState("");
 
   const load = useCallback(async () => {
-    if (!actorEmail) return;
+    if (!actorEmail) { setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
@@ -70,7 +70,8 @@ export default function LearnPage() {
         lmsGet<Doc>("/api/lms/certificates", actorEmail, { courseId: LMS_COURSE_ID }).catch(() => null),
       ]);
       setTree(t);
-      setProgress((p.progress as Doc[])?.[0] || null);
+      const plist = Array.isArray(p.progress) ? (p.progress as Doc[]) : p.progress ? [p.progress as Doc] : [];
+      setProgress(plist.find((d) => String(d.studentEmail || "").toLowerCase() === actorEmail.toLowerCase()) || plist[0] || null);
       setAttempts((a.attempts as Doc[]) || []);
       setSubmissions((s.submissions as Doc[]) || []);
       setCert(c);
@@ -126,7 +127,6 @@ export default function LearnPage() {
     try {
       const res = await lmsPost<Doc>("/api/lms/progress", {
         actorEmail, courseId: LMS_COURSE_ID, lessonId,
-        totalLessons: tree?.lessons?.length || 52,
         currentModuleId: moduleId,
       });
       setProgress(res.progress as Doc);
@@ -178,7 +178,7 @@ export default function LearnPage() {
       } catch { /* fullscreen is best-effort */ }
       const res = await lmsPost<Doc>("/api/lms/attempts", { actorEmail, testId: confirmTest.id, action: "start" });
       setRunner({ attempt: res.attempt as Doc, test: confirmTest });
-      lmsPost("/api/lms/events", { actorEmail, kind: "TEST_STARTED", attemptId: (res.attempt as Doc).id, testId: confirmTest.id, studentId: actorEmail }).catch(() => {});
+      // TEST_STARTED is logged once by TestRunner on mount — do not log here.
       setConfirmTest(null);
     } catch (e: any) {
       setStartError(e.message);
@@ -250,7 +250,7 @@ export default function LearnPage() {
               <div className="flex flex-wrap gap-1">
                 {Object.entries(skills).map(([name, level]) => (
                   <Badge key={name} variant={level === "NOT_STARTED" ? "secondary" : "info"} className="text-[10px]">
-                    {name}: {String(level).replace("_", " ")}
+                    {name}: {String(level).replaceAll("_", " ")}
                   </Badge>
                 ))}
               </div>
@@ -336,7 +336,7 @@ export default function LearnPage() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
-                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replace("_", " ")}</Badge>}
+                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replaceAll("_", " ")}</Badge>}
                                 <Button size="sm" variant="outline" onClick={() => openSubmit(p, "practice")}>Submit work</Button>
                               </div>
                             </div>
@@ -357,7 +357,7 @@ export default function LearnPage() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
-                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replace("_", " ")}</Badge>}
+                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replaceAll("_", " ")}</Badge>}
                                 <Button size="sm" variant="outline" onClick={() => openSubmit(h, "handson")}>Submit work</Button>
                               </div>
                             </div>
@@ -395,9 +395,14 @@ export default function LearnPage() {
                       )}
                     </div>
                     <Button
-                      onClick={() => (latest?.status === "in_progress" ? (async () => {
-                        setRunner({ attempt: latest, test: t });
-                      })() : (setStartError(""), setConfirmTest(t)))}
+                      onClick={() => {
+                        if (latest?.status === "in_progress") {
+                          setRunner({ attempt: latest, test: t });
+                        } else {
+                          setStartError("");
+                          setConfirmTest(t);
+                        }
+                      }}
                       disabled={limitReached && latest?.status !== "in_progress"}
                       className="bg-[#0066ff] hover:bg-[#0052cc] text-white"
                     >
@@ -440,7 +445,7 @@ export default function LearnPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         {s.score != null && <span className="text-xs text-white">{s.score}</span>}
-                        <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "secondary"}>{String(s.status || "submitted").replace("_", " ")}</Badge>
+                        <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "secondary"}>{String(s.status || "submitted").replaceAll("_", " ")}</Badge>
                       </div>
                     </CardContent>
                   </Card>
@@ -518,13 +523,16 @@ export default function LearnPage() {
 
 function TestRunner({ attempt, test, actorEmail, onExit }: { attempt: Doc; test: Doc; actorEmail: string; onExit: () => void }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>(attempt.answers || {});
-  const initialSeconds = (() => {
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const resultRef = useRef<Doc | null>(null);
+  const [initialSeconds] = useState(() => {
     if (attempt.expiresAt) {
-      const left = Math.round((new Date(attempt.expiresAt).getTime() - Date.now()) / 1000);
-      return Math.max(0, left);
+      const left = Math.round((Date.parse(attempt.expiresAt) - Date.now()) / 1000);
+      return Number.isFinite(left) ? Math.max(0, left) : 0;
     }
     return (test.timeLimitMinutes || test.durationMinutes || 20) * 60;
-  })();
+  });
   const [secondsLeft, setSecondsLeft] = useState(initialSeconds);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<Doc | null>(null);
@@ -536,8 +544,20 @@ function TestRunner({ attempt, test, actorEmail, onExit }: { attempt: Doc; test:
   const submitted = useRef(false);
 
   const log = useCallback((kind: string, meta?: Record<string, unknown>) => {
-    lmsPost("/api/lms/events", { actorEmail, kind, attemptId, testId: test.id, studentId: actorEmail, timestamp: new Date().toISOString(), meta }).catch(() => {});
+    lmsPost("/api/lms/events", { actorEmail, courseId: LMS_COURSE_ID, kind, attemptId, testId: test.id, studentId: actorEmail, timestamp: new Date().toISOString(), meta }).catch(() => {});
   }, [actorEmail, attemptId, test.id]);
+
+  // Beacon delivery for page-unload (async fetch is cancelled on unload).
+  const beacon = useCallback((kind: string) => {
+    try {
+      const payload = JSON.stringify({ actorEmail, courseId: LMS_COURSE_ID, kind, attemptId, testId: test.id, studentId: actorEmail, timestamp: new Date().toISOString() });
+      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+        navigator.sendBeacon("/api/lms/events", payload);
+        return;
+      }
+    } catch { /* ignore */ }
+    log(kind);
+  }, [actorEmail, attemptId, test.id, log]);
 
   const qkind = (q: Doc) => q.kind || q.type || "short";
   const qid = (q: Doc, i: number) => q.id || String(i);
@@ -549,60 +569,73 @@ function TestRunner({ attempt, test, actorEmail, onExit }: { attempt: Doc; test:
   const totalCount = (test.questions || []).length;
 
   const doSubmit = useCallback(async (isExpired: boolean) => {
-    if (submitted.current) return;
+    if (submitted.current || resultRef.current) return;
     submitted.current = true;
     setSubmitting(true);
     try {
       if (isExpired) log("TIME_EXPIRED");
       log("SUBMISSION_CONFIRMED");
-      const res = await lmsPost<Doc>("/api/lms/attempts", { actorEmail, action: "submit", attemptId, answers });
-      setResult({ ...res, timeExpired: isExpired || res.timeExpired });
+      const res = await lmsPost<Doc>("/api/lms/attempts", { actorEmail, action: "submit", attemptId, answers: answersRef.current });
+      const r = { ...res, timeExpired: isExpired || res.timeExpired };
+      resultRef.current = r;
+      setResult(r);
       try {
         if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
       } catch { /* ignore */ }
     } catch (e: any) {
-      setResult({ error: e.message });
+      const r = { error: e.message };
+      resultRef.current = r;
+      setResult(r);
     }
     setSubmitting(false);
     setSummaryOpen(false);
     setExitOpen(false);
-  }, [actorEmail, answers, attemptId, log]);
+  }, [actorEmail, attemptId, log]);
+
+  const doSubmitRef = useRef(doSubmit);
+  doSubmitRef.current = doSubmit;
 
   useEffect(() => {
     log("TEST_STARTED");
-    const t = setInterval(() => setSecondsLeft((s) => (s > 0 ? s - 1 : 0)), 1000);
+    const t = setInterval(() => {
+      if (resultRef.current) { clearInterval(t); return; }
+      setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    if (resultRef.current) return;
     if (secondsLeft === 300 && !warned.current) {
       warned.current = true;
       log("TIME_WARNING", { secondsLeft: "300" });
     }
     if (secondsLeft === 0 && !result && !submitting) {
       setExpired(true);
-      doSubmit(true);
+      doSubmitRef.current(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secondsLeft]);
+  }, [secondsLeft, result, submitting, log]);
 
   useEffect(() => {
     const hb = setInterval(() => {
-      lmsPost("/api/lms/attempts", { actorEmail, action: "save", attemptId, answers }).catch(() => {});
+      if (resultRef.current) { clearInterval(hb); return; }
+      lmsPost("/api/lms/attempts", { actorEmail, action: "save", attemptId, answers: answersRef.current }).catch(() => {});
       log("heartbeat");
     }, 30000);
     const onVis = () => {
+      if (resultRef.current) return;
       if (document.hidden) log("TAB_SWITCH");
       else log("WINDOW_FOCUS");
     };
-    const onBlur = () => log("WINDOW_BLUR");
-    const onFocus = () => log("WINDOW_FOCUS");
-    const onCopy = () => log("copy");
-    const onPaste = () => log("paste");
-    const onFs = () => log(document.fullscreenElement ? "FULLSCREEN_ENTER" : "FULLSCREEN_EXIT");
+    const onBlur = () => { if (!resultRef.current) log("WINDOW_BLUR"); };
+    const onFocus = () => { if (!resultRef.current) log("WINDOW_FOCUS"); };
+    const onCopy = () => { if (!resultRef.current) log("copy"); };
+    const onPaste = () => { if (!resultRef.current) log("paste"); };
+    const onFs = () => { if (!resultRef.current) log(document.fullscreenElement ? "FULLSCREEN_ENTER" : "FULLSCREEN_EXIT"); };
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      log("EXIT_ATTEMPT");
+      if (resultRef.current) return;
+      beacon("EXIT_ATTEMPT");
       e.preventDefault();
     };
     document.addEventListener("visibilitychange", onVis);
@@ -622,10 +655,20 @@ function TestRunner({ attempt, test, actorEmail, onExit }: { attempt: Doc; test:
       document.removeEventListener("fullscreenchange", onFs);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [actorEmail, answers, attemptId, log]);
+  }, [actorEmail, attemptId, log, beacon]);
 
   const setAnswer = (qId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [qId]: [value] }));
+  };
+
+  const toggleMsq = (qId: string, opt: string) => {
+    setAnswers((prev) => {
+      const cur = Array.isArray(prev[qId]) ? [...prev[qId] as string[]] : [];
+      const i = cur.indexOf(opt);
+      if (i >= 0) cur.splice(i, 1);
+      else cur.push(opt);
+      return { ...prev, [qId]: cur };
+    });
   };
 
   const mm = Math.floor(secondsLeft / 60);
@@ -674,6 +717,16 @@ function TestRunner({ attempt, test, actorEmail, onExit }: { attempt: Doc; test:
                     name={id}
                     checked={(answers[id] || [])[0] === opt}
                     onChange={() => setAnswer(id, opt)}
+                  />
+                  {opt}
+                </label>
+              ))}
+              {kind === "msq" && (q.options || []).map((opt: string, oi: number) => (
+                <label key={oi} className="flex items-center gap-2 text-sm text-[#94a3b8] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(answers[id] || []).includes(opt)}
+                    onChange={() => toggleMsq(id, opt)}
                   />
                   {opt}
                 </label>

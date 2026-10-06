@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import {
   isPrivilegedRole,
+  lmsErrorStatus,
   requireLmsRoles,
-  resolveActor,
   serverTimestamp,
   shuffleTestForStudent,
   stripTestForStudent,
 } from "@/lib/lms/server";
+import { requireActor } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,12 +50,10 @@ function collectionFor(kind: string) {
 export async function GET(req: NextRequest) {
   try {
     const db = await dbOrThrow();
-    const actorEmail = req.nextUrl.searchParams.get("actorEmail") || "";
     const courseId = req.nextUrl.searchParams.get("courseId") || "";
     if (!courseId) return NextResponse.json({ error: "courseId required" }, { status: 400 });
 
-    const actor = await resolveActor(db, actorEmail);
-    requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
+    const actor = await requireActor(req, db, ["super-admin", "trainer", "student"]);
     const privileged = isPrivilegedRole(actor!.role);
 
     const courseSnap = await db.collection(COLLECTIONS.LMS_COURSES).doc(courseId).get();
@@ -98,8 +97,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ course, modules, lessons, practices, handsons, tests });
   } catch (err: any) {
     const msg = err?.message || "Failed to load content";
-    const status = /Unauthorized|Forbidden/.test(msg) ? 403 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }
 
@@ -108,26 +106,46 @@ export async function POST(req: NextRequest) {
   try {
     const db = await dbOrThrow();
     const body = await req.json();
-    const actor = await resolveActor(db, String(body.actorEmail || ""));
-    requireLmsRoles(actor, ["super-admin", "trainer"]);
+    const actor = await requireActor(req, db, ["super-admin", "trainer"], body);
 
     const kind = String(body.kind || "");
     if (!(CONTENT_KINDS as readonly string[]).includes(kind)) {
       return NextResponse.json({ error: "Invalid kind" }, { status: 400 });
     }
     const doc = body.doc as Record<string, unknown> | undefined;
-    if (!doc || typeof (doc as any).id !== "string" || !(doc as any).id) {
+    const rawId = String((doc as { id?: unknown } | undefined)?.id || "").trim();
+    if (!doc || !rawId) {
       return NextResponse.json({ error: "doc.id required" }, { status: 400 });
     }
+    if (rawId.includes("/") || rawId.length > 128) {
+      return NextResponse.json({ error: "Invalid doc.id" }, { status: 400 });
+    }
+    const { id: _omit, createdAt: _created, createdBy: _by, ...rest } = doc as Record<string, unknown>;
+    const payload = rest as Record<string, unknown>;
+    // courseId must reference an existing course (except when saving the course itself).
+    const courseId = typeof payload.courseId === "string" ? payload.courseId : "";
+    if (kind !== "courses") {
+      if (!courseId) {
+        return NextResponse.json({ error: "doc.courseId required" }, { status: 400 });
+      }
+      const courseSnap = await db.collection(COLLECTIONS.LMS_COURSES).doc(courseId).get();
+      if (!courseSnap.exists) {
+        return NextResponse.json({ error: "Course not found" }, { status: 404 });
+      }
+    }
+    if (typeof payload.status === "string" && payload.status !== "draft" && payload.status !== "published") {
+      return NextResponse.json({ error: "Invalid doc.status (draft|published)" }, { status: 400 });
+    }
     const now = serverTimestamp();
-    await db
-      .collection(collectionFor(kind))
-      .doc((doc as any).id)
-      .set({ ...doc, updatedAt: now }, { merge: true });
-    return NextResponse.json({ ok: true, id: (doc as any).id });
+    const ref = db.collection(collectionFor(kind)).doc(rawId);
+    const exists = (await ref.get()).exists;
+    await ref.set(
+      { ...payload, updatedAt: now, ...(exists ? {} : { createdAt: now, createdBy: actor.email }) },
+      { merge: true }
+    );
+    return NextResponse.json({ ok: true, id: rawId });
   } catch (err: any) {
     const msg = err?.message || "Failed to save content";
-    const status = /Unauthorized|Forbidden/.test(msg) ? 403 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }

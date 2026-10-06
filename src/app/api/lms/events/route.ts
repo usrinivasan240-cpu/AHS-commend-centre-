@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COLLECTIONS } from "@/lib/firebase/types";
-import { requireLmsRoles, resolveActor, serverTimestamp } from "@/lib/lms/server";
+import { lmsErrorStatus, serverTimestamp } from "@/lib/lms/server";
 import type { LmsEvent } from "@/lib/lms/types";
+import { requireActor } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,8 +24,7 @@ export async function POST(req: NextRequest) {
   try {
     const db = await dbOrThrow();
     const body = await req.json();
-    const actor = await resolveActor(db, String(body.actorEmail || ""));
-    requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
+    const actor = await requireActor(req, db, ["super-admin", "trainer", "student"], body);
 
     const kind = String(body.kind || "");
     if (!KINDS.includes(kind)) return NextResponse.json({ error: "Invalid kind" }, { status: 400 });
@@ -39,15 +39,22 @@ export async function POST(req: NextRequest) {
     if (body.attemptId) event.attemptId = String(body.attemptId);
     if (body.studentId) event.studentId = String(body.studentId);
     if (body.testId) event.testId = String(body.testId);
+    if (body.courseId) event.courseId = String(body.courseId);
     if (body.timestamp) event.timestamp = String(body.timestamp);
-    if (typeof body.durationSeconds === "number") event.durationSeconds = body.durationSeconds;
-    if (body.meta && typeof body.meta === "object") event.meta = body.meta;
+    if (typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds)) {
+      event.durationSeconds = Math.max(0, body.durationSeconds);
+    }
+    if (body.meta && typeof body.meta === "object" && !Array.isArray(body.meta)) {
+      // Coerce all meta values to strings (matches LmsEvent type).
+      event.meta = Object.fromEntries(
+        Object.entries(body.meta as Record<string, unknown>).map(([k, v]) => [k, String(v)])
+      );
+    }
     await db.collection(COLLECTIONS.LMS_EVENTS).doc(event.id).set(event);
     return NextResponse.json({ ok: true, id: event.id });
   } catch (err: any) {
     const msg = err?.message || "Failed to log event";
-    const status = /Unauthorized|Forbidden/.test(msg) ? 403 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }
 
@@ -55,37 +62,23 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const db = await dbOrThrow();
-    const actorEmail = req.nextUrl.searchParams.get("actorEmail") || "";
     const attemptId = req.nextUrl.searchParams.get("attemptId") || "";
     const testId = req.nextUrl.searchParams.get("testId") || "";
     const courseId = req.nextUrl.searchParams.get("courseId") || "";
     const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 100, 1), 500);
-    const actor = await resolveActor(db, actorEmail);
-    requireLmsRoles(actor, ["super-admin", "trainer"]);
+    await requireActor(req, db, ["super-admin", "trainer"]);
 
     let q: FirebaseFirestore.Query = db.collection(COLLECTIONS.LMS_EVENTS);
     if (attemptId) q = q.where("attemptId", "==", attemptId);
     if (testId) q = q.where("testId", "==", testId);
-    if (courseId) {
-      // Events carry courseId when the client sends it; fall back to unfiltered when absent.
-      try {
-        q = q.where("courseId", "==", courseId);
-      } catch {
-        // ignore — older events may lack courseId
-      }
-    }
-    const snap = await q.get();
-    let events = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
-    // If courseId filter matched nothing (older events lack it), fall back to full list.
-    if (courseId && events.length === 0) {
-      const all = await db.collection(COLLECTIONS.LMS_EVENTS).get();
-      events = all.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
-    }
+    if (courseId) q = q.where("courseId", "==", courseId);
+    // Bounded query — never fall back to a full collection scan.
+    const snap = await q.limit(limit).get();
+    const events = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
     events.sort((a: any, b: any) => String(b.at || b.timestamp || "").localeCompare(String(a.at || a.timestamp || "")));
     return NextResponse.json({ events: events.slice(0, limit) });
   } catch (err: any) {
     const msg = err?.message || "Failed to list events";
-    const status = /Unauthorized|Forbidden/.test(msg) ? 403 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }

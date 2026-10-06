@@ -4,6 +4,7 @@ export const COLLECTIONS = {
   PROJECTS: "projects",
   TASKS: "tasks",
   COURSES: "courses",
+  ASSIGNMENTS: "assignments",
   ASSESSMENTS: "assessments",
   ASSESSMENT_RESULTS: "assessment_results",
   LEADS: "leads",

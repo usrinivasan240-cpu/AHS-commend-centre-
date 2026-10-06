@@ -49,6 +49,7 @@ export async function resolveActor(
   if (snap.empty) return null;
   const doc = snap.docs[0];
   const data = doc.data() as Record<string, string>;
+  if (String(data.status || "active") !== "active") return null;
   return {
     id: doc.id,
     name: data.name || email,
@@ -65,15 +66,25 @@ export function requireLmsRoles(actor: LmsActor | null, roles: string[]): LmsAct
   return actor;
 }
 
+/** Map LMS error messages to HTTP status (use in catch blocks). */
+export function lmsErrorStatus(msg: string): number {
+  if (/Unauthorized/i.test(msg)) return 401;
+  if (/Forbidden/i.test(msg)) return 403;
+  if (/not found/i.test(msg)) return 404;
+  if (/already|closed|limit|expired|conflict/i.test(msg)) return 409;
+  return 500;
+}
+
 export function isPrivilegedRole(role: string): boolean {
   return role === "super-admin" || role === "trainer";
 }
 
 /** Strip answer keys before sending a test to a student client. */
 export function stripTestForStudent(test: LmsTest): Omit<LmsTest, "questions"> & { questions: Omit<LmsQuestion, "answerKeys">[] } {
+  const questions = Array.isArray(test.questions) ? test.questions : [];
   return {
     ...test,
-    questions: test.questions.map((q) => {
+    questions: questions.map((q) => {
       const { answerKeys: _removed, ...rest } = q;
       return rest;
     }),
@@ -84,36 +95,48 @@ function normalizeShort(value: string): string {
   return String(value || "").toLowerCase().trim().replace(/\s+/g, " ");
 }
 
-/** Server-side scoring. Code questions always need manual review. */
+/**
+ * Server-side scoring. Code questions always need manual review and are
+ * excluded from the auto-scored total (reported separately as pendingPoints),
+ * so a test WITH code questions can still reach 100% on the auto part.
+ */
 export function scoreAttempt(
-  questions: LmsQuestion[],
-  answers: Record<string, string[]>
-): { scorePercent: number; needsReview: boolean; earned: number; total: number } {
+  questions: LmsQuestion[] | undefined | null,
+  answers: Record<string, unknown> | undefined | null
+): { scorePercent: number; needsReview: boolean; earned: number; total: number; pendingPoints: number } {
+  const list = Array.isArray(questions) ? questions : [];
+  const ans: Record<string, unknown> = answers && typeof answers === "object" ? answers : {};
   let earned = 0;
   let total = 0;
+  let pendingPoints = 0;
   let needsReview = false;
-  for (const q of questions) {
-    total += q.points;
-    const given = answers[q.id] || [];
+  for (const q of list) {
+    const pts = Number((q as { points?: unknown }).points);
+    const points = Number.isFinite(pts) && pts > 0 ? pts : 0;
+    const raw = ans[q.id];
+    const given: string[] = Array.isArray(raw) ? raw.map(String) : raw != null ? [String(raw)] : [];
     if (q.kind === "code") {
       needsReview = true;
+      pendingPoints += points;
       continue;
     }
-    const keys = q.answerKeys || [];
+    total += points;
+    const keys = Array.isArray(q.answerKeys) ? q.answerKeys : [];
     if (q.kind === "mcq" || q.kind === "short") {
       const g = q.kind === "short" ? given.map(normalizeShort) : given;
       const k = q.kind === "short" ? keys.map(normalizeShort) : keys;
-      if (g.length === 1 && k.includes(g[0])) earned += q.points;
+      if (g.length === 1 && k.includes(g[0])) earned += points;
     } else if (q.kind === "msq") {
       const gSet = new Set(given);
       const kSet = new Set(keys);
       if (gSet.size === kSet.size && [...gSet].every((v) => kSet.has(v))) {
-        earned += q.points;
+        earned += points;
       }
     }
+    // Unknown kinds contribute to total but never earn (fail-closed).
   }
   const scorePercent = total > 0 ? Math.round((earned / total) * 100) : 0;
-  return { scorePercent, needsReview, earned, total };
+  return { scorePercent, needsReview, earned, total, pendingPoints };
 }
 
 export function computePercentComplete(completed: number, total: number): number {
@@ -158,8 +181,9 @@ export function shuffleTestForStudent(
   test: LmsTest,
   studentEmail: string
 ): LmsTest {
-  const seedBase = `${test.id}__${studentEmail.toLowerCase()}`;
-  let questions = test.shuffleQuestions === false ? [...test.questions] : seededShuffle(test.questions, seedBase);
+  const seedBase = `${test.id || "test"}__${String(studentEmail || "").toLowerCase()}`;
+  const rawQuestions = Array.isArray(test.questions) ? test.questions : [];
+  let questions = test.shuffleQuestions === false ? [...rawQuestions] : seededShuffle(rawQuestions, seedBase);
   questions = questions.map((q) => {
     if (test.shuffleOptions === false || !q.options || q.options.length < 2) return { ...q };
     const order = seededShuffle(q.options.map((_, i) => i), `${seedBase}__${q.id}`);

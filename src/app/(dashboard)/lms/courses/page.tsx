@@ -29,6 +29,8 @@ const KIND_LABEL: Record<string, string> = {
 export default function CoursesManagePage() {
   const { user } = useAuth();
   const actorEmail = user?.email || "";
+  const role = user?.role || "";
+  const isTrainer = ["super-admin", "core-admin", "team-lead", "trainer"].includes(role);
   const [tree, setTree] = useState<Doc | null>(null);
   const [submissions, setSubmissions] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,7 @@ export default function CoursesManagePage() {
   const newQPromptRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
-    if (!actorEmail) return;
+    if (!actorEmail) { setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
@@ -90,7 +92,8 @@ export default function CoursesManagePage() {
     try {
       await lmsPost("/api/lms/submissions", {
         actorEmail, action: "review", id: review.id,
-        feedback, score: score ? Number(score) : undefined,
+        feedback,
+        ...(score.trim() !== "" ? { score: Number(score) } : {}),
         reviewStatus,
       });
       setReview(null);
@@ -168,9 +171,10 @@ export default function CoursesManagePage() {
   };
 
   const addQuestion = () => {
+    if (!editTest) return;
     if (!newQ.prompt.trim()) return;
     const q: Doc = {
-      id: `${editTest?.id}-Q${Date.now().toString(36).toUpperCase()}`,
+      id: `${editTest.id}-Q${Date.now().toString(36).toUpperCase()}`,
       kind: newQ.kind,
       prompt: newQ.prompt.trim(),
       points: Number(newQ.points) || 5,
@@ -193,6 +197,14 @@ export default function CoursesManagePage() {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 className="h-8 w-8 animate-spin text-[#0066ff]" />
+      </div>
+    );
+  }
+
+  if (actorEmail && !isTrainer) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <p className="text-sm text-[#64748b]">Trainer access only. Students use Learn.</p>
       </div>
     );
   }
@@ -256,13 +268,13 @@ export default function CoursesManagePage() {
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium text-white">{s.studentEmail} · {s.practiceId || s.handsonId}</p>
-                  <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "warning"}>{String(s.status || "submitted").replace("_", " ")}</Badge>
+                  <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "warning"}>{String(s.status || "submitted").replaceAll("_", " ")}</Badge>
                 </div>
                 <p className="text-xs text-[#94a3b8] whitespace-pre-wrap line-clamp-4">{s.content}</p>
                 {s.githubUrl && <p className="text-xs text-[#00d9ff]">GitHub: {s.githubUrl}</p>}
                 {s.liveUrl && <p className="text-xs text-[#00d9ff]">Live: {s.liveUrl}</p>}
                 {s.feedback && <p className="text-xs text-[#00d9ff]">Feedback: {s.feedback}{s.score != null ? ` · ${s.score}` : ""}</p>}
-                <Button size="sm" variant="outline" onClick={() => { setReview(s); setFeedback(s.feedback || ""); setScore(s.score != null ? String(s.score) : ""); setReviewStatus(s.status === "reviewed" ? "reviewed" : "reviewed"); }}>
+                <Button size="sm" variant="outline" onClick={() => { setReview(s); setFeedback(s.feedback || ""); setScore(s.score != null ? String(s.score) : ""); setReviewStatus(["reviewed", "under_review", "resubmit_required"].includes(s.status) ? s.status : "reviewed"); }}>
                   <MessageSquareCheck className="mr-1 h-3 w-3" /> Review
                 </Button>
               </CardContent>

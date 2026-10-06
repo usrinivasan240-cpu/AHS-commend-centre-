@@ -28,6 +28,8 @@ const FLAG_KINDS = ["copy", "paste", "tab", "TAB_SWITCH", "blur", "WINDOW_BLUR",
 export default function MonitoringPage() {
   const { user } = useAuth();
   const actorEmail = user?.email || "";
+  const role = user?.role || "";
+  const isTrainer = ["super-admin", "core-admin", "team-lead", "trainer"].includes(role);
   const [attempts, setAttempts] = useState<Doc[]>([]);
   const [progress, setProgress] = useState<Doc[]>([]);
   const [events, setEvents] = useState<Doc[]>([]);
@@ -41,7 +43,7 @@ export default function MonitoringPage() {
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
-    if (!actorEmail) return;
+    if (!actorEmail) { setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
@@ -70,8 +72,8 @@ export default function MonitoringPage() {
   }, [actorEmail]);
 
   useEffect(() => {
-    loadFeed();
     if (!feedOn) return;
+    loadFeed();
     const t = setInterval(loadFeed, 15000);
     return () => clearInterval(t);
   }, [loadFeed, feedOn]);
@@ -97,7 +99,7 @@ export default function MonitoringPage() {
     setSelected(attemptId);
     try {
       const e = await lmsGet<Doc>("/api/lms/events", actorEmail, { attemptId });
-      setEvents((e.events || []).sort((x: Doc, y: Doc) => String(x.at || x.timestamp || "").localeCompare(String(y.at || y.timestamp || ""))));
+      setEvents([...(e.events || [])].sort((x: Doc, y: Doc) => String(y.at || y.timestamp || "").localeCompare(String(x.at || x.timestamp || ""))));
     } catch (err: any) {
       setError(err.message);
     }
@@ -140,6 +142,14 @@ export default function MonitoringPage() {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 className="h-8 w-8 animate-spin text-[#0066ff]" />
+      </div>
+    );
+  }
+
+  if (actorEmail && !isTrainer) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <p className="text-sm text-[#64748b]">Trainer access only.</p>
       </div>
     );
   }

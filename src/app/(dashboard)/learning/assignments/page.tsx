@@ -80,14 +80,16 @@ const statusIcon: Record<string, typeof ClipboardList> = {
 
 export default function AssignmentsPage() {
   const { data: courses } = useFirestoreQuery(COLLECTIONS.COURSES);
-  const { data: assignments, loading } = useFirestoreQuery("assignments" as any);
-  const { add, remove, loading: saving } = useFirestoreActions("assignments" as any);
+  const { data: assignments, loading } = useFirestoreQuery(COLLECTIONS.ASSIGNMENTS);
+  const { add, update, remove, loading: saving } = useFirestoreActions(COLLECTIONS.ASSIGNMENTS);
 
   const [tab, setTab] = useState("active");
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [submissionText, setSubmissionText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [newAssignment, setNewAssignment] = useState({
     title: "",
@@ -98,57 +100,73 @@ export default function AssignmentsPage() {
     type: "assignment" as "assignment" | "mini-project",
   });
 
-  const activeList = assignments.filter((a: any) => a.status === "active");
-  const submittedList = assignments.filter((a: any) => a.status === "submitted");
-  const gradedList = assignments.filter((a: any) => a.status === "graded");
+  const activeList = assignments.filter((a) => a.status === "active");
+  const submittedList = assignments.filter((a) => a.status === "submitted");
+  const gradedList = assignments.filter((a) => a.status === "graded");
 
   const filtered = useMemo(() => {
-    let result = assignments.filter((a: any) => a.status === tab);
+    let result = assignments.filter((a) => a.status === tab);
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter((a: any) => a.title?.toLowerCase().includes(q));
+      result = result.filter((a) => String(a.title || "").toLowerCase().includes(q));
     }
     return result;
   }, [tab, search, assignments]);
 
   const handleCreate = async () => {
     if (!newAssignment.title.trim()) return;
+    setFormError("");
     try {
       await add({
-        title: newAssignment.title,
+        title: newAssignment.title.trim(),
         description: newAssignment.description,
-        courseId: newAssignment.courseId || null,
-        dueDate: newAssignment.dueDate,
+        ...(newAssignment.courseId ? { courseId: newAssignment.courseId } : {}),
+        ...(newAssignment.dueDate ? { dueDate: newAssignment.dueDate } : {}),
         status: "active",
         priority: newAssignment.priority,
         type: newAssignment.type,
-        grade: null,
-        feedback: null,
         createdAt: new Date().toISOString(),
       });
       setCreateOpen(false);
       setNewAssignment({ title: "", description: "", courseId: "", dueDate: "", priority: "medium", type: "assignment" });
     } catch (err) {
-      console.error("Failed to create:", err);
+      setFormError(err instanceof Error ? err.message : "Failed to create assignment.");
     }
   };
 
   const handleDelete = async (id: string) => {
+    setFormError("");
     try {
       await remove(id);
     } catch (err) {
-      console.error("Failed to delete:", err);
+      setFormError(err instanceof Error ? err.message : "Failed to delete assignment.");
     }
   };
 
-  const handleSubmit = () => {
-    setDialogOpen(false);
-    setSelectedAssignment(null);
-    setSubmissionText("");
+  const handleSubmit = async () => {
+    if (!selectedAssignment || !submissionText.trim()) return;
+    setSubmitting(true);
+    setFormError("");
+    try {
+      await update(selectedAssignment.id, {
+        status: "submitted",
+        submissionText: submissionText.trim(),
+        submittedAt: new Date().toISOString(),
+      });
+      setDialogOpen(false);
+      setSelectedAssignment(null);
+      setSubmissionText("");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to submit assignment.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const openSubmitDialog = (assignment: Assignment) => {
     setSelectedAssignment(assignment);
+    setSubmissionText("");
+    setFormError("");
     setDialogOpen(true);
   };
 
@@ -225,6 +243,11 @@ export default function AssignmentsPage() {
 
       {/* Tabs + Assignments */}
       <motion.div variants={fadeInUp}>
+        {formError && !dialogOpen && !createOpen && (
+          <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+            {formError}
+          </div>
+        )}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="active">Active</TabsTrigger>
@@ -235,7 +258,7 @@ export default function AssignmentsPage() {
           <TabsContent value={tab} className="mt-4">
             <div className="space-y-3">
               {filtered.map((assignment, i) => {
-                const Icon = statusIcon[assignment.status];
+                const Icon = statusIcon[assignment.status] ?? ClipboardList;
                 const course = courses.find((c) => c.id === assignment.courseId);
                 return (
                   <motion.div
@@ -253,7 +276,7 @@ export default function AssignmentsPage() {
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
-                                <h3 className="font-semibold text-white">{assignment.title}</h3>
+                                <h3 className="font-semibold text-white">{assignment.title ?? "Untitled assignment"}</h3>
                                 {assignment.type === "mini-project" && (
                                   <Badge variant="secondary" className="text-[10px]">Mini-Project</Badge>
                                 )}
@@ -267,14 +290,14 @@ export default function AssignmentsPage() {
                                 <span>•</span>
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3.5 w-3.5" />
-                                  Due {formatDate(assignment.dueDate)}
+                                  Due {assignment.dueDate ? formatDate(assignment.dueDate) : "No due date"}
                                 </span>
                               </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-                            <Badge variant={priorityVariant[assignment.priority]} className="text-[10px]">
-                              {assignment.priority} priority
+                            <Badge variant={priorityVariant[assignment.priority] ?? "secondary"} className="text-[10px]">
+                              {assignment.priority ?? "normal"} priority
                             </Badge>
                             {assignment.status === "active" && (
                               <div className="flex items-center gap-2">
@@ -286,7 +309,7 @@ export default function AssignmentsPage() {
                                 </Button>
                               </div>
                             )}
-                            {assignment.status === "graded" && assignment.grade !== undefined && (
+                            {assignment.status === "graded" && assignment.grade != null && (
                               <div className="text-right">
                                 <p className="text-2xl font-bold text-white">{assignment.grade}%</p>
                                 <p className="text-xs text-[#64748b]">{assignment.feedback}</p>
@@ -321,6 +344,11 @@ export default function AssignmentsPage() {
             <DialogDescription>{selectedAssignment?.title}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {formError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {formError}
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Submission URL / Notes</Label>
               <Textarea
@@ -335,9 +363,9 @@ export default function AssignmentsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={!submissionText.trim()}>
-              <Send className="mr-2 h-4 w-4" />
-              Submit
+            <Button onClick={handleSubmit} disabled={!submissionText.trim() || submitting}>
+              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              {submitting ? "Submitting..." : "Submit"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -351,6 +379,11 @@ export default function AssignmentsPage() {
             <DialogDescription>Add a new assignment or mini-project</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {formError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {formError}
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Title</Label>
               <Input
@@ -369,6 +402,22 @@ export default function AssignmentsPage() {
               />
             </div>
             <div className="space-y-2">
+              <Label>Course</Label>
+              <Select value={newAssignment.courseId || "none"} onValueChange={(v) => setNewAssignment({ ...newAssignment, courseId: v === "none" ? "" : v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a course (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No course</SelectItem>
+                  {courses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.title || "Untitled course"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>Due Date</Label>
               <Input
                 type="date"
@@ -379,7 +428,7 @@ export default function AssignmentsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Priority</Label>
-                <Select value={newAssignment.priority} onValueChange={(v: any) => setNewAssignment({ ...newAssignment, priority: v })}>
+                <Select value={newAssignment.priority} onValueChange={(v: "low" | "medium" | "high") => setNewAssignment({ ...newAssignment, priority: v })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -392,7 +441,7 @@ export default function AssignmentsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Type</Label>
-                <Select value={newAssignment.type} onValueChange={(v: any) => setNewAssignment({ ...newAssignment, type: v })}>
+                <Select value={newAssignment.type} onValueChange={(v: "assignment" | "mini-project") => setNewAssignment({ ...newAssignment, type: v })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

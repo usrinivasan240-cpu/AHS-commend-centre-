@@ -178,6 +178,7 @@ export type LmsEvent = {
   attemptId?: string;
   studentId?: string;
   testId?: string;
+  courseId?: string;
   actorEmail: string;
   kind: LmsEventKind;
   at: string;

@@ -2,15 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { COLLECTIONS } from "@/lib/firebase/types";
 import {
   auditLog,
+  lmsErrorStatus,
   mergeSkillLevels,
   notifyUser,
   requireLmsRoles,
-  resolveActor,
   scoreAttempt,
   serverTimestamp,
   skillsForModule,
 } from "@/lib/lms/server";
 import type { LmsAttempt, LmsProgress, LmsTest } from "@/lib/lms/types";
+import { requireActor } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ async function dbOrThrow() {
 }
 
 function errStatus(msg: string) {
-  return /Unauthorized|Forbidden|not found|closed|already|limit|expired/i.test(msg) ? 403 : 500;
+  return lmsErrorStatus(msg);
 }
 
 // POST /api/lms/attempts — start (or resume) an attempt. Body: { actorEmail, testId, action: "start" | "save" | "submit", attemptId?, answers? }
@@ -30,13 +31,16 @@ export async function POST(req: NextRequest) {
     const db = await dbOrThrow();
     const body = await req.json();
     const action = String(body.action || "start");
-    const actor = await resolveActor(db, String(body.actorEmail || ""));
-    requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
-    const studentEmail = String(body.studentEmail || actor!.email).toLowerCase();
+    const actor = await requireActor(req, db, ["super-admin", "trainer", "student"], body);
+    // Students may only act for themselves — never for another studentEmail.
+    const requestedStudent = String(body.studentEmail || actor!.email).toLowerCase().trim();
+    if (actor!.role === "student" && requestedStudent !== actor!.email) {
+      return NextResponse.json({ error: "Forbidden: cannot act for another student" }, { status: 403 });
+    }
+    const studentEmail = requestedStudent;
 
     if (action === "start") {
-      requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
-      const testId = String(body.testId || "");
+      const testId = String(body.testId || "").trim();
       if (!testId) return NextResponse.json({ error: "testId required" }, { status: 400 });
       const testSnap = await db.collection(COLLECTIONS.LMS_TESTS).doc(testId).get();
       if (!testSnap.exists) return NextResponse.json({ error: "Test not found" }, { status: 404 });
@@ -106,9 +110,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Forbidden: not your attempt" }, { status: 403 });
       }
       if (attempt.status !== "in_progress") {
-        return NextResponse.json({ error: "Attempt already closed" }, { status: 403 });
+        return NextResponse.json({ error: "Attempt already closed" }, { status: 409 });
       }
-      await ref.set({ answers: body.answers || {}, updatedAt: serverTimestamp() }, { merge: true });
+      const saveAnswers = body.answers && typeof body.answers === "object" ? body.answers : {};
+      await ref.set({ answers: saveAnswers, updatedAt: serverTimestamp() }, { merge: true });
       return NextResponse.json({ ok: true });
     }
 
@@ -123,7 +128,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Forbidden: not your attempt" }, { status: 403 });
       }
       if (attempt.status !== "in_progress") {
-        return NextResponse.json({ error: "Attempt already closed" }, { status: 403 });
+        return NextResponse.json({ error: "Attempt already closed" }, { status: 409 });
       }
       const testSnap = await db.collection(COLLECTIONS.LMS_TESTS).doc(attempt.testId).get();
       if (!testSnap.exists) return NextResponse.json({ error: "Test not found" }, { status: 404 });
@@ -131,11 +136,16 @@ export async function POST(req: NextRequest) {
 
       const now = serverTimestamp();
       // Server-side timer validation: frontend clocks are advisory only.
-      const timeExpired = attempt.expiresAt ? now > attempt.expiresAt : false;
+      const timeExpired = attempt.expiresAt ? Date.parse(now) > Date.parse(attempt.expiresAt) : false;
 
-      const answers = (body.answers || attempt.answers || {}) as Record<string, string[]>;
-      const { scorePercent, needsReview } = scoreAttempt(test.questions, answers);
-      const passed = scorePercent >= (test.passPercent ?? 60);
+      const rawAnswers = body.answers && typeof body.answers === "object" ? body.answers : attempt.answers;
+      const answers: Record<string, string[]> = (rawAnswers && typeof rawAnswers === "object" ? rawAnswers : {}) as Record<string, string[]>;
+      const questions = Array.isArray((test as { questions?: unknown }).questions)
+        ? (test as LmsTest).questions
+        : [];
+      const { scorePercent, needsReview } = scoreAttempt(questions, answers);
+      // Unreviewed (code-question) attempts can never count as passed yet.
+      const passed = !needsReview && scorePercent >= (Number(test.passPercent) || 60);
 
       // Activity summary from ingested events.
       const evtSnap = await db
@@ -148,7 +158,8 @@ export async function POST(req: NextRequest) {
         activitySummary[k] = (activitySummary[k] || 0) + 1;
       }
 
-      const startedMs = new Date(attempt.startedAt).getTime();
+      const startedMs = Date.parse(String(attempt.startedAt || ""));
+      const elapsedSeconds = Number.isFinite(startedMs) ? Math.max(0, Math.round((Date.now() - startedMs) / 1000)) : 0;
       const update: Partial<LmsAttempt> = {
         answers,
         status: needsReview ? "submitted" : "scored",
@@ -156,7 +167,7 @@ export async function POST(req: NextRequest) {
         needsReview,
         timeExpired,
         submittedAt: now,
-        durationSeconds: Math.max(0, Math.round((Date.now() - startedMs) / 1000)),
+        durationSeconds: elapsedSeconds,
         activitySummary,
         updatedAt: now,
       };
@@ -280,17 +291,16 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const db = await dbOrThrow();
-    const actorEmail = req.nextUrl.searchParams.get("actorEmail") || "";
     const testId = req.nextUrl.searchParams.get("testId") || "";
     const courseId = req.nextUrl.searchParams.get("courseId") || "";
-    const actor = await resolveActor(db, actorEmail);
-    requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
+    const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 100, 1), 500);
+    const actor = await requireActor(req, db, ["super-admin", "trainer", "student"]);
 
     let q: FirebaseFirestore.Query = db.collection(COLLECTIONS.LMS_ATTEMPTS);
     if (testId) q = q.where("testId", "==", testId);
     if (courseId) q = q.where("courseId", "==", courseId);
     if (actor!.role === "student") q = q.where("studentEmail", "==", actor!.email);
-    const snap = await q.get();
+    const snap = await q.limit(limit).get();
     const attempts = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
     return NextResponse.json({ attempts });
   } catch (err: any) {

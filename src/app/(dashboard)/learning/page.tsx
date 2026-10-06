@@ -55,7 +55,7 @@ const difficultyVariant: Record<string, "default" | "secondary" | "success" | "w
 const pieColors = ["#0066ff", "#00d9ff", "#7fff00", "#f59e0b", "#ef4444"];
 
 export default function LearningDashboardPage() {
-  const { data: courses, loading } = useFirestoreQuery(COLLECTIONS.COURSES);
+  const { data: courses, loading, error } = useFirestoreQuery(COLLECTIONS.COURSES);
 
   if (loading) {
     return (
@@ -65,16 +65,24 @@ export default function LearningDashboardPage() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-red-400">Failed to load courses: {error}</div>
+      </div>
+    );
+  }
+
   const totalCourses = courses.length;
-  const inProgress = courses.filter((c) => c.progress > 0 && c.progress < 100).length;
-  const completed = courses.filter((c) => c.progress === 100).length;
-  const avgProgress = totalCourses ? Math.round(courses.reduce((s, c) => s + c.progress, 0) / totalCourses) : 0;
+  const inProgress = courses.filter((c) => (c.progress || 0) > 0 && (c.progress || 0) < 100).length;
+  const completed = courses.filter((c) => (c.progress || 0) === 100).length;
+  const avgProgress = totalCourses ? Math.round(courses.reduce((s, c) => s + (c.progress || 0), 0) / totalCourses) : 0;
 
   const tracks = ["frontend", "backend", "ai", "ui-ux", "cloud"] as const;
   const trackProgress = tracks.map((track) => {
     const trackCourses = courses.filter((c) => c.track === track);
     const avg = trackCourses.length
-      ? Math.round(trackCourses.reduce((s, c) => s + c.progress, 0) / trackCourses.length)
+      ? Math.round(trackCourses.reduce((s, c) => s + (c.progress || 0), 0) / trackCourses.length)
       : 0;
     return { track, ...trackConfig[track], avg, count: trackCourses.length };
   });
@@ -241,25 +249,25 @@ export default function LearningDashboardPage() {
                     <Card className="group cursor-pointer transition-all hover:border-[#0066ff]/30 hover:shadow-[0_0_20px_rgba(0,102,255,0.1)]">
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between">
-                          <Badge variant={trackConfig[course.track]?.color ? "default" : "secondary"} className="text-[10px]">
-                            {trackConfig[course.track]?.label}
+                          <Badge variant={trackConfig[course.track] ? "default" : "secondary"} className="text-[10px]">
+                            {trackConfig[course.track]?.label ?? course.track ?? "General"}
                           </Badge>
-                          <Badge variant={difficultyVariant[course.difficulty]} className="text-[10px]">
-                            {course.difficulty}
+                          <Badge variant={difficultyVariant[course.difficulty] ?? "secondary"} className="text-[10px]">
+                            {course.difficulty ?? "Unknown"}
                           </Badge>
                         </div>
                         <h3 className="mt-3 font-medium text-white group-hover:text-[#0066ff] transition-colors">
-                          {course.title}
+                          {course.title ?? "Untitled course"}
                         </h3>
                         <p className="mt-1 text-xs text-[#64748b] line-clamp-2">{course.description}</p>
                         <div className="mt-3">
                           <div className="flex items-center justify-between text-xs text-[#64748b]">
                             <span>
-                              {course.completedLessons}/{course.totalLessons} lessons
+                              {course.completedLessons ?? 0}/{course.totalLessons ?? 0} lessons
                             </span>
-                            <span>{course.progress}%</span>
+                            <span>{course.progress ?? 0}%</span>
                           </div>
-                          <Progress value={course.progress} className="mt-1.5" />
+                          <Progress value={course.progress ?? 0} className="mt-1.5" />
                         </div>
                       </CardContent>
                     </Card>

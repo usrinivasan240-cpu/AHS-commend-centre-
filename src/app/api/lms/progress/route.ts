@@ -4,11 +4,11 @@ import {
   auditLog,
   computePercentComplete,
   emptySkills,
-  requireLmsRoles,
-  resolveActor,
+  lmsErrorStatus,
   serverTimestamp,
 } from "@/lib/lms/server";
 import type { LmsProgress } from "@/lib/lms/types";
+import { requireActor } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,28 +18,23 @@ async function dbOrThrow() {
   return getAdminDb();
 }
 
-function errStatus(msg: string) {
-  return /Unauthorized|Forbidden|not found|already/i.test(msg) ? 403 : 500;
-}
-
 // GET /api/lms/progress?actorEmail=&courseId= — own progress for students, all for trainer/super-admin
 export async function GET(req: NextRequest) {
   try {
     const db = await dbOrThrow();
-    const actorEmail = req.nextUrl.searchParams.get("actorEmail") || "";
     const courseId = req.nextUrl.searchParams.get("courseId") || "";
-    const actor = await resolveActor(db, actorEmail);
-    requireLmsRoles(actor, ["super-admin", "trainer", "student"]);
+    const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 100, 1), 500);
+    const actor = await requireActor(req, db, ["super-admin", "trainer", "student"]);
 
     let q: FirebaseFirestore.Query = db.collection(COLLECTIONS.LMS_PROGRESS);
     if (courseId) q = q.where("courseId", "==", courseId);
     if (actor!.role === "student") q = q.where("studentEmail", "==", actor!.email);
-    const snap = await q.get();
+    const snap = await q.limit(limit).get();
     const progress = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
     return NextResponse.json({ progress });
   } catch (err: any) {
     const msg = err?.message || "Failed to load progress";
-    return NextResponse.json({ error: msg }, { status: errStatus(msg) });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }
 
@@ -49,14 +44,21 @@ export async function POST(req: NextRequest) {
   try {
     const db = await dbOrThrow();
     const body = await req.json();
-    const actor = await resolveActor(db, String(body.actorEmail || ""));
-    requireLmsRoles(actor, ["student"]);
+    const actor = await requireActor(req, db, ["student"], body);
 
-    const courseId = String(body.courseId || "");
+    const courseId = String(body.courseId || "").trim();
     if (!courseId) {
       return NextResponse.json({ error: "courseId required" }, { status: 400 });
     }
+    // The course must exist and be published.
+    const courseSnap = await db.collection(COLLECTIONS.LMS_COURSES).doc(courseId).get();
+    if (!courseSnap.exists) {
+      return NextResponse.json({ error: "Course not found" }, { status: 404 });
+    }
     const action = String(body.action || "complete");
+    if (action !== "enroll" && action !== "complete") {
+      return NextResponse.json({ error: "Invalid action (enroll|complete)" }, { status: 400 });
+    }
 
     const docId = `${courseId}__${actor!.email}`;
     const ref = db.collection(COLLECTIONS.LMS_PROGRESS).doc(docId);
@@ -95,13 +97,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, progress });
     }
 
-    const lessonId = String(body.lessonId || "");
+    const lessonId = String(body.lessonId || "").trim();
     if (!lessonId) {
       return NextResponse.json({ error: "lessonId required" }, { status: 400 });
     }
+    // The lesson must belong to this course (prevents cross-course completion spoofing).
+    const lessonSnap = await db.collection(COLLECTIONS.LMS_LESSONS).doc(lessonId).get();
+    if (!lessonSnap.exists || (lessonSnap.data() as { courseId?: string })?.courseId !== courseId) {
+      return NextResponse.json({ error: "Lesson not found in this course" }, { status: 404 });
+    }
     const completed = new Set(existing?.completedLessonIds || []);
     completed.add(lessonId);
-    const totalLessons = typeof body.totalLessons === "number" ? body.totalLessons : 20;
+    // Total lessons counted server-side — never trust the client's totalLessons.
+    const lesCountSnap = await db
+      .collection(COLLECTIONS.LMS_LESSONS)
+      .where("courseId", "==", courseId)
+      .where("status", "==", "published")
+      .get();
+    const totalLessons = Math.max(1, lesCountSnap.size);
     const now = serverTimestamp();
     const progress: LmsProgress = {
       id: docId,
@@ -123,6 +136,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, progress });
   } catch (err: any) {
     const msg = err?.message || "Failed to save progress";
-    return NextResponse.json({ error: msg }, { status: errStatus(msg) });
+    return NextResponse.json({ error: msg }, { status: lmsErrorStatus(msg) });
   }
 }

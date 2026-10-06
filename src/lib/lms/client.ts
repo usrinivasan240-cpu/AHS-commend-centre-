@@ -7,6 +7,7 @@ function actorHeaders(actorEmail: string): Record<string, string> {
 }
 
 export async function lmsGet<T>(path: string, actorEmail: string, params: Record<string, string> = {}): Promise<T> {
+  if (!actorEmail) throw new Error("Not authenticated — please sign in again");
   const qs = new URLSearchParams({ actorEmail, ...params });
   const res = await fetch(`${path}?${qs.toString()}`, { headers: { ...actorHeaders(actorEmail) } });
   const data = await res.json().catch(() => ({}));
@@ -16,6 +17,7 @@ export async function lmsGet<T>(path: string, actorEmail: string, params: Record
 
 export async function lmsPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const actorEmail = typeof body.actorEmail === "string" ? body.actorEmail : "";
+  if (!actorEmail) throw new Error("Not authenticated — please sign in again");
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...actorHeaders(actorEmail) },

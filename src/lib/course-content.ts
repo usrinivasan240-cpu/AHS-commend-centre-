@@ -1,4 +1,4 @@
-﻿interface Lesson {
+﻿export interface Lesson {
   title: string;
   description: string;
   duration: string;
@@ -7,7 +7,7 @@
   learningObjectives?: string[];
 }
 
-interface CourseLevel {
+export interface CourseLevel {
   title: string;
   description: string;
   difficulty: "beginner" | "intermediate" | "advanced";
@@ -2032,13 +2032,41 @@ const fallbackContent: Record<string, Lesson[]> = {
   ],
 };
 
+// Aliases map normalized user input to a canonical topic key.
+// Exact match on the normalized topic is tried first; aliases second.
+// There is intentionally no substring fallback: `"Java".includes` style
+// matching previously returned JavaScript content for a Java topic.
+const TOPIC_ALIASES: Record<string, string> = {
+  js: "javascript",
+  reactjs: "react",
+  py: "python",
+  ts: "typescript",
+  node: "nodejs",
+  "node js": "nodejs",
+  ml: "machine learning",
+  ai: "machine learning",
+  "artificial intelligence": "machine learning",
+  "ui-ux": "ui ux",
+  uiux: "ui ux",
+  "ui/ux": "ui ux",
+  ux: "ui ux",
+  ui: "ui ux",
+  design: "ui ux",
+};
+
+function normalizeTopic(topic: string): string {
+  return topic.toLowerCase().trim().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function findTopicKey(topic: string): string | null {
-  const lower = topic.toLowerCase().trim();
-  const keys = Object.keys(topicContent);
-  for (const key of keys) {
-    if (lower.includes(key) || key.includes(lower)) {
-      return key;
-    }
+  const normalized = normalizeTopic(topic);
+  if (!normalized) return null;
+  if (Object.prototype.hasOwnProperty.call(topicContent, normalized)) {
+    return normalized;
+  }
+  const aliased = TOPIC_ALIASES[normalized];
+  if (aliased && Object.prototype.hasOwnProperty.call(topicContent, aliased)) {
+    return aliased;
   }
   return null;
 }
@@ -2046,16 +2074,17 @@ function findTopicKey(topic: string): string | null {
 export function generateCourseContent(topic: string): CourseLevel[] {
   const topicKey = findTopicKey(topic);
 
+  // Clone lesson arrays so callers can never mutate the module-level catalog.
   const lessons = topicKey
     ? {
-        basic: topicContent[topicKey].basic,
-        medium: topicContent[topicKey].medium,
-        advanced: topicContent[topicKey].advanced,
+        basic: topicContent[topicKey].basic.map((l) => ({ ...l })),
+        medium: topicContent[topicKey].medium.map((l) => ({ ...l })),
+        advanced: topicContent[topicKey].advanced.map((l) => ({ ...l })),
       }
     : {
-        basic: fallbackContent.basic,
-        medium: fallbackContent.medium,
-        advanced: fallbackContent.advanced,
+        basic: fallbackContent.basic.map((l) => ({ ...l })),
+        medium: fallbackContent.medium.map((l) => ({ ...l })),
+        advanced: fallbackContent.advanced.map((l) => ({ ...l })),
       };
 
   return [

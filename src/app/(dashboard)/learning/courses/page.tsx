@@ -74,15 +74,9 @@ const trackBadgeVariant: Record<string, "default" | "secondary" | "success" | "w
   cloud: "danger",
 };
 
-const difficultyColors: Record<string, string> = {
-  beginner: "text-[#10b981]",
-  intermediate: "text-[#f59e0b]",
-  advanced: "text-[#ef4444]",
-};
-
 export default function CoursesPage() {
-  const { data: courses, loading } = useFirestoreQuery(COLLECTIONS.COURSES);
-  const { add, loading: addingCourse } = useFirestoreActions(COLLECTIONS.COURSES);
+  const { data: courses, loading, error: queryError } = useFirestoreQuery(COLLECTIONS.COURSES);
+  const { add } = useFirestoreActions(COLLECTIONS.COURSES);
   const [search, setSearch] = useState("");
   const [track, setTrack] = useState("all");
   const [sortBy, setSortBy] = useState("progress");
@@ -94,6 +88,7 @@ export default function CoursesPage() {
     track: "frontend",
   });
   const [preview, setPreview] = useState<ReturnType<typeof generateCourseContent> | null>(null);
+  const [createError, setCreateError] = useState("");
 
   const filtered = useMemo(() => {
     let result = [...courses];
@@ -102,8 +97,8 @@ export default function CoursesPage() {
       const q = search.toLowerCase();
       result = result.filter(
         (c) =>
-          c.title.toLowerCase().includes(q) ||
-          c.description.toLowerCase().includes(q)
+          (c.title || "").toLowerCase().includes(q) ||
+          (c.description || "").toLowerCase().includes(q)
       );
     }
 
@@ -112,12 +107,12 @@ export default function CoursesPage() {
     }
 
     result.sort((a, b) => {
-      if (sortBy === "progress") return b.progress - a.progress;
+      if (sortBy === "progress") return (b.progress || 0) - (a.progress || 0);
       if (sortBy === "difficulty") {
         const order: Record<string, number> = { beginner: 1, intermediate: 2, advanced: 3 };
         return (order[b.difficulty as string] || 0) - (order[a.difficulty as string] || 0);
       }
-      return a.title.localeCompare(b.title);
+      return (a.title || "").localeCompare(b.title || "");
     });
 
     return result;
@@ -134,29 +129,34 @@ export default function CoursesPage() {
   const handleCreateCourses = async () => {
     if (!newCourse.topic.trim()) return;
     setGenerating(true);
+    setCreateError("");
 
     const content = preview || generateCourseContent(newCourse.topic);
 
     try {
-      for (const level of content) {
-        await add({
-          title: level.title,
-          description: level.description,
-          track: newCourse.track,
-          difficulty: level.difficulty,
-          totalLessons: level.lessons.length,
-          completedLessons: 0,
-          progress: 0,
-          lessons: level.lessons,
-          topic: newCourse.topic,
-        });
-      }
+      // Create all three levels together so a mid-loop failure can't
+      // leave a partial course set behind silently.
+      await Promise.all(
+        content.map((level) =>
+          add({
+            title: level.title,
+            description: newCourse.description.trim() || level.description,
+            track: newCourse.track,
+            difficulty: level.difficulty,
+            totalLessons: level.lessons.length,
+            completedLessons: 0,
+            progress: 0,
+            lessons: level.lessons,
+            topic: newCourse.topic,
+          })
+        )
+      );
 
       setNewCourse({ topic: "", description: "", track: "frontend" });
       setPreview(null);
       setDialogOpen(false);
     } catch (err) {
-      console.error("Failed to create courses:", err);
+      setCreateError(err instanceof Error ? err.message : "Failed to create courses. Please try again.");
     } finally {
       setGenerating(false);
     }
@@ -166,6 +166,14 @@ export default function CoursesPage() {
     return (
       <div className="flex h-64 items-center justify-center">
         <div className="text-sm text-[#64748b]">Loading courses...</div>
+      </div>
+    );
+  }
+
+  if (queryError) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="text-sm text-red-400">Failed to load courses: {queryError}</div>
       </div>
     );
   }
@@ -251,29 +259,29 @@ export default function CoursesPage() {
                   <Card className="group h-full transition-all hover:border-[#0066ff]/30 hover:shadow-[0_0_20px_rgba(0,102,255,0.1)]">
                     <CardContent className="p-5">
                       <div className="flex items-start justify-between">
-                        <Badge variant={trackBadgeVariant[course.track]} className="text-[10px]">
-                          {trackConfig[course.track]?.label}
+                        <Badge variant={trackBadgeVariant[course.track] ?? "secondary"} className="text-[10px]">
+                          {trackConfig[course.track]?.label ?? course.track ?? "General"}
                         </Badge>
-                        <Badge variant={difficultyVariant[course.difficulty]} className="text-[10px]">
-                          {course.difficulty}
+                        <Badge variant={difficultyVariant[course.difficulty] ?? "secondary"} className="text-[10px]">
+                          {course.difficulty ?? "Unknown"}
                         </Badge>
                       </div>
                       <h3 className="mt-3 text-lg font-semibold text-white group-hover:text-[#0066ff] transition-colors">
-                        {course.title}
+                        {course.title ?? "Untitled course"}
                       </h3>
                       <p className="mt-1 text-sm text-[#64748b] line-clamp-2">{course.description}</p>
                       <div className="mt-4 flex items-center gap-2 text-xs text-[#64748b]">
                         <BookOpen className="h-3.5 w-3.5" />
                         <span>
-                          {course.completedLessons}/{course.totalLessons} lessons completed
+                          {course.completedLessons ?? 0}/{course.totalLessons ?? 0} lessons completed
                         </span>
                       </div>
                       <div className="mt-3">
                         <div className="flex items-center justify-between text-xs text-[#64748b]">
                           <span>Progress</span>
-                          <span className="font-medium text-white">{course.progress}%</span>
+                          <span className="font-medium text-white">{course.progress ?? 0}%</span>
                         </div>
-                        <Progress value={course.progress} className="mt-1.5" />
+                        <Progress value={course.progress ?? 0} className="mt-1.5" />
                       </div>
                       {course.lessons && Array.isArray(course.lessons) && course.lessons.length > 0 && (
                         <div className="mt-3 border-t border-border/50 pt-3">
@@ -340,6 +348,17 @@ export default function CoursesPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label>Description (optional, overrides generated blurbs)</Label>
+              <Textarea
+                placeholder="What is this course about?"
+                value={newCourse.description}
+                onChange={(e) => {
+                  setNewCourse({ ...newCourse, description: e.target.value });
+                }}
+                rows={2}
+              />
+            </div>
+            <div className="space-y-2">
               <Label>Track</Label>
               <Select value={newCourse.track} onValueChange={(v) => setNewCourse({ ...newCourse, track: v })}>
                 <SelectTrigger>
@@ -395,7 +414,7 @@ export default function CoursesPage() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setDialogOpen(false); setPreview(null); }}>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setPreview(null); setCreateError(""); }}>
               Cancel
             </Button>
             {!preview ? (
@@ -408,6 +427,9 @@ export default function CoursesPage() {
                 {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                 {generating ? "Creating 3 Courses..." : "Create All 3 Courses"}
               </Button>
+            )}
+            {createError && (
+              <p className="w-full text-sm text-red-400">{createError}</p>
             )}
           </DialogFooter>
         </DialogContent>
