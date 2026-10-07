@@ -22,6 +22,7 @@ import {
   Calendar,
   Shield,
   Save,
+  KeyRound,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ import { cn, getInitials, getScoreColor } from "@/lib/utils";
 import type { Role, MemberStatus } from "@/types";
 import { useFirestoreQuery } from "@/lib/firebase/hooks";
 import { COLLECTIONS, type FirestoreUser } from "@/lib/firebase/types";
+import { useAuth } from "@/lib/auth-context";
 
 type SortField = "name" | "performanceScore" | "joinDate";
 type SortDir = "asc" | "desc";
@@ -128,6 +130,8 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
 }
 
 export default function PeoplePage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "super-admin";
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [teamFilter, setTeamFilter] = useState<string>("all");
@@ -142,6 +146,9 @@ export default function PeoplePage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetMsg, setResetMsg] = useState("");
 
   const { data: firestoreMembers, loading } = useFirestoreQuery(COLLECTIONS.USERS);
 
@@ -273,6 +280,41 @@ export default function PeoplePage() {
   const openDelete = (member: typeof allMembers[number]) => {
     setSelectedMember(member);
     setDeleteOpen(true);
+  };
+
+  const openReset = (member: typeof allMembers[number]) => {
+    setSelectedMember(member);
+    setResetPassword("");
+    setResetMsg("");
+    setResetOpen(true);
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedMember) return;
+    if (resetPassword.length < 6) {
+      setResetMsg("New password must be at least 6 characters.");
+      return;
+    }
+    setSaving(true);
+    setResetMsg("");
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(user?.email ? { "x-actor-email": user.email } : {}),
+        },
+        body: JSON.stringify({ actorEmail: user?.email || "", email: selectedMember.email, newPassword: resetPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Password reset failed");
+      setResetMsg("ok:Password updated. Share the new password with the user securely.");
+      setResetPassword("");
+    } catch (err) {
+      setResetMsg(err instanceof Error ? err.message : "Password reset failed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteMember = async () => {
@@ -518,6 +560,12 @@ export default function PeoplePage() {
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
+                              {isSuperAdmin && (
+                                <DropdownMenuItem onClick={() => openReset(member)}>
+                                  <KeyRound className="mr-2 h-4 w-4" />
+                                  Reset password
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem className="text-danger focus:text-danger" onClick={() => openDelete(member)}>
                                 <Trash2 className="mr-2 h-4 w-4" />
@@ -809,6 +857,48 @@ export default function PeoplePage() {
                 <Trash2 className="mr-2 h-4 w-4" />
                 Remove
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reset Password Dialog (super-admin only) */}
+        <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-white">
+                <KeyRound className="h-5 w-5 text-primary" />
+                Reset Password
+              </DialogTitle>
+              <DialogDescription>
+                Set a new login password for <strong className="text-foreground">{selectedMember?.name}</strong> ({selectedMember?.email}).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {resetMsg && (
+                <div className={`rounded-lg border p-3 text-sm ${resetMsg.startsWith("ok:") ? "bg-success/10 border-success/30 text-success" : "bg-danger/10 border-danger/30 text-danger"}`}>
+                  {resetMsg.startsWith("ok:") ? resetMsg.slice(3) : resetMsg}
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label className="text-foreground">New password (min 6 characters)</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter new password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setResetOpen(false)}>
+                {resetMsg.startsWith("ok:") ? "Close" : "Cancel"}
+              </Button>
+              {!resetMsg.startsWith("ok:") && (
+                <Button onClick={handleResetPassword} loading={saving}>
+                  <Save className="mr-2 h-4 w-4" />
+                  Set Password
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
