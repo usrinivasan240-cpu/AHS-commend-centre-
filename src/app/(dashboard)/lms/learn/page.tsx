@@ -386,11 +386,16 @@ export default function LearnPage() {
               const latest = att[0];
               const closedCount = att.filter((a) => a.status !== "in_progress").length;
               const limitReached = closedCount >= (t.maxAttempts ?? 1);
+              const isToday = t.scheduledDate ? t.scheduledDate === new Date().toISOString().slice(0, 10) : false;
               return (
                 <Card key={t.id} className="border-[#1e293b] bg-[#0f172a]">
                   <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
                     <div>
-                      <p className="font-semibold text-white">{t.id} — {t.title}</p>
+                      <p className="font-semibold text-white">
+                        {t.id} — {t.title}{" "}
+                        {t.scheduledDate && <span className="text-xs font-normal text-[#64748b]">· {t.scheduledDate}</span>}{" "}
+                        {isToday && <Badge variant="success" className="ml-1">Today&apos;s test</Badge>}
+                      </p>
                       <p className="text-xs text-[#64748b]">
                         {(t.questions || []).length} questions shown · {t.timeLimitMinutes || t.durationMinutes || 20} min · pass {t.passPercent || 60}% · {closedCount}/{t.maxAttempts ?? 1} attempts used
                       </p>

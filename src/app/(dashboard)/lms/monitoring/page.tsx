@@ -32,6 +32,8 @@ export default function MonitoringPage() {
   const isTrainer = ["super-admin", "core-admin", "team-lead", "trainer"].includes(role);
   const [attempts, setAttempts] = useState<Doc[]>([]);
   const [progress, setProgress] = useState<Doc[]>([]);
+  const [submissions, setSubmissions] = useState<Doc[]>([]);
+  const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [events, setEvents] = useState<Doc[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,12 +49,14 @@ export default function MonitoringPage() {
     setLoading(true);
     setError("");
     try {
-      const [a, p] = await Promise.all([
+      const [a, p, s] = await Promise.all([
         lmsGet<Doc>("/api/lms/attempts", actorEmail, { courseId: LMS_COURSE_ID }),
         lmsGet<Doc>("/api/lms/progress", actorEmail, { courseId: LMS_COURSE_ID }),
+        lmsGet<Doc>("/api/lms/submissions", actorEmail, { courseId: LMS_COURSE_ID }),
       ]);
       setAttempts(a.attempts || []);
       setProgress(p.progress || []);
+      setSubmissions(s.submissions || []);
     } catch (e: any) {
       setError(e.message || "Failed to load");
     }
@@ -138,6 +142,42 @@ export default function MonitoringPage() {
   const selectedAttempt = attempts.find((a) => a.id === selected);
   const flagCount = events.filter((e) => FLAG_KINDS.includes(e.kind)).length;
 
+  // Per-student analysis: roster from everyone with progress or attempts.
+  const roster = useMemo(() => {
+    const map: Record<string, { email: string; percent: number; testsTaken: number; avgScore: number | null }> = {};
+    for (const p of progress) {
+      const email = p.studentEmail;
+      if (!email) continue;
+      map[email] = map[email] || { email, percent: 0, testsTaken: 0, avgScore: null };
+      map[email].percent = p.percentComplete || 0;
+    }
+    const scores: Record<string, number[]> = {};
+    for (const a of attempts) {
+      if (!a.studentEmail) continue;
+      map[a.studentEmail] = map[a.studentEmail] || { email: a.studentEmail, percent: 0, testsTaken: 0, avgScore: null };
+      if (a.status !== "in_progress") {
+        map[a.studentEmail].testsTaken++;
+        if (typeof a.scorePercent === "number") (scores[a.studentEmail] = scores[a.studentEmail] || []).push(a.scorePercent);
+      }
+    }
+    for (const [email, arr] of Object.entries(scores)) {
+      map[email].avgScore = Math.round(arr.reduce((x, y) => x + y, 0) / arr.length);
+    }
+    return Object.values(map).sort((x, y) => x.email.localeCompare(y.email));
+  }, [progress, attempts]);
+
+  const student = useMemo(() => {
+    if (!selectedStudent) return null;
+    const desc = (x: Doc, y: Doc) => String(y.submittedAt || y.startedAt || "").localeCompare(String(x.submittedAt || x.startedAt || ""));
+    return {
+      email: selectedStudent,
+      progress: progress.find((p) => p.studentEmail === selectedStudent) || null,
+      attempts: attempts.filter((a) => a.studentEmail === selectedStudent).sort(desc),
+      submissions: submissions.filter((s) => s.studentEmail === selectedStudent).sort(desc),
+      recentFlags: feed.filter((e) => (e.studentEmail || e.actorEmail) === selectedStudent && FLAG_KINDS.includes(e.kind)).length,
+    };
+  }, [selectedStudent, progress, attempts, submissions, feed]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -202,6 +242,74 @@ export default function MonitoringPage() {
           {perTest.length === 0 && <p className="text-sm text-[#64748b]">No attempts yet.</p>}
         </CardContent>
       </Card>
+
+      <Card className="border-[#1e293b] bg-[#0f172a]">
+        <CardContent className="p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Users className="h-4 w-4" /> Per-student analysis ({roster.length})</h3>
+          {roster.map((r) => (
+            <div key={r.email} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-white">{r.email}</p>
+                <p className="text-xs text-[#64748b]">
+                  progress {r.percent}% · {r.testsTaken} test{r.testsTaken === 1 ? "" : "s"} taken{r.avgScore != null ? ` · avg ${r.avgScore}%` : ""}
+                </p>
+              </div>
+              <Button size="sm" variant={selectedStudent === r.email ? "default" : "outline"} onClick={() => setSelectedStudent(selectedStudent === r.email ? null : r.email)}>
+                {selectedStudent === r.email ? "Hide" : "Analyze"}
+              </Button>
+            </div>
+          ))}
+          {roster.length === 0 && <p className="text-sm text-[#64748b]">No students yet.</p>}
+        </CardContent>
+      </Card>
+
+      {student && (
+        <Card className="border-[#0066ff]/40 bg-[#0f172a]">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white">{student.email} — detail</h3>
+              <Button size="sm" variant="outline" onClick={() => setSelectedStudent(null)}>Close</Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs text-[#64748b] sm:grid-cols-4">
+              <p>Progress: <span className="text-white">{student.progress?.percentComplete ?? 0}%</span></p>
+              <p>Lessons: <span className="text-white">{(student.progress?.completedLessonIds || []).length}</span></p>
+              <p>Tests passed: <span className="text-white">{(student.progress?.passedTestIds || []).length}</span></p>
+              <p>Recent flags: <span className="text-white">{student.recentFlags}</span></p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase text-[#64748b]">Test history</p>
+              {student.attempts.map((a: Doc) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-1.5">
+                  <span className="text-xs text-white">{a.testId}</span>
+                  <span className="text-[11px] text-[#64748b]">
+                    {String(a.submittedAt || a.startedAt || "").slice(0, 10) || "—"} · {a.status}
+                    {a.scorePercent != null ? ` · ${a.scorePercent}%` : ""}{a.timeExpired ? " · expired" : ""}
+                  </span>
+                </div>
+              ))}
+              {student.attempts.length === 0 && <p className="text-xs text-[#64748b]">No tests taken.</p>}
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase text-[#64748b]">Mini-project submissions</p>
+              {student.submissions.map((s: Doc) => (
+                <div key={s.id} className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-white">{s.practiceId || s.handsonId || s.id}</span>
+                    <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "warning"}>{String(s.status || "submitted").replaceAll("_", " ")}</Badge>
+                  </div>
+                  <p className="mt-1 text-[11px] text-[#94a3b8] line-clamp-2">{s.content}</p>
+                  <div className="mt-1 flex flex-wrap gap-3 text-[11px]">
+                    {s.githubUrl && <a href={s.githubUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline">Open project ↗</a>}
+                    {s.liveUrl && <a href={s.liveUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline">Open live site ↗</a>}
+                    {s.score != null && <span className="text-[#64748b]">marks: {s.score}</span>}
+                  </div>
+                </div>
+              ))}
+              {student.submissions.length === 0 && <p className="text-xs text-[#64748b]">No submissions.</p>}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-[#1e293b] bg-[#0f172a]">
         <CardContent className="p-4 space-y-2">

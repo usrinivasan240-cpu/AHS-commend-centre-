@@ -122,6 +122,8 @@ export type LmsTest = {
   shuffleOptions: boolean;
   order: number;
   status: LmsStatus;
+  /** Daily-test date (YYYY-MM-DD). Optional; students see it as the test day. */
+  scheduledDate?: string;
   questions: LmsQuestion[];
   createdAt: string;
   updatedAt: string;

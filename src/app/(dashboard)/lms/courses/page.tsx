@@ -117,6 +117,7 @@ export default function CoursesManagePage() {
       passPercent: t.passPercent ?? 60,
       questionCount: t.questionCount ?? (t.questions || []).length,
       maxAttempts: t.maxAttempts ?? 1,
+      scheduledDate: t.scheduledDate || "",
       shuffleQuestions: t.shuffleQuestions !== false,
       shuffleOptions: t.shuffleOptions !== false,
       strict: { fullscreen: true, tabMonitoring: true, focusMonitoring: true, activityLogging: true, confirmSubmission: true, ...(t.strict || {}) },
@@ -156,6 +157,7 @@ export default function CoursesManagePage() {
         passPercent: Number(testForm.passPercent) || 60,
         questionCount: Number(testForm.questionCount) || testForm.questions.length,
         maxAttempts: Math.max(1, Number(testForm.maxAttempts) || 1),
+        scheduledDate: testForm.scheduledDate ? String(testForm.scheduledDate) : "",
         shuffleQuestions: !!testForm.shuffleQuestions,
         shuffleOptions: !!testForm.shuffleOptions,
         strict: testForm.strict,
@@ -237,7 +239,7 @@ export default function CoursesManagePage() {
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-white">{d.title || d.id}</p>
-                      <p className="text-xs text-[#64748b]">{d.id}{d.moduleId ? ` · module ${d.moduleId}` : ""}{kind === "tests" ? ` · ${(d.questions || []).length}/${d.questionCount ?? "?"} questions · ${d.timeLimitMinutes ?? 20} min · pass ${d.passPercent ?? 60}% · ${d.maxAttempts ?? 1} attempt(s)` : ""}</p>
+                      <p className="text-xs text-[#64748b]">{d.id}{d.moduleId ? ` · module ${d.moduleId}` : ""}{d.scheduledDate ? ` · ${d.scheduledDate}` : ""}{kind === "tests" ? ` · ${(d.questions || []).length}/${d.questionCount ?? "?"} questions · ${d.timeLimitMinutes ?? 20} min · pass ${d.passPercent ?? 60}% · ${d.maxAttempts ?? 1} attempt(s)` : ""}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Badge variant={d.status === "published" ? "success" : "secondary"}>{d.status || "draft"}</Badge>
@@ -271,8 +273,8 @@ export default function CoursesManagePage() {
                   <Badge variant={s.status === "reviewed" ? "success" : s.status === "resubmit_required" ? "danger" : "warning"}>{String(s.status || "submitted").replaceAll("_", " ")}</Badge>
                 </div>
                 <p className="text-xs text-[#94a3b8] whitespace-pre-wrap line-clamp-4">{s.content}</p>
-                {s.githubUrl && <p className="text-xs text-[#00d9ff]">GitHub: {s.githubUrl}</p>}
-                {s.liveUrl && <p className="text-xs text-[#00d9ff]">Live: {s.liveUrl}</p>}
+                {s.githubUrl && <p className="text-xs"><span className="text-[#64748b]">GitHub: </span><a href={s.githubUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline break-all">Open project ↗</a></p>}
+                {s.liveUrl && <p className="text-xs"><span className="text-[#64748b]">Live: </span><a href={s.liveUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline break-all">Open live site ↗</a></p>}
                 {s.feedback && <p className="text-xs text-[#00d9ff]">Feedback: {s.feedback}{s.score != null ? ` · ${s.score}` : ""}</p>}
                 <Button size="sm" variant="outline" onClick={() => { setReview(s); setFeedback(s.feedback || ""); setScore(s.score != null ? String(s.score) : ""); setReviewStatus(["reviewed", "under_review", "resubmit_required"].includes(s.status) ? s.status : "reviewed"); }}>
                   <MessageSquareCheck className="mr-1 h-3 w-3" /> Review
@@ -291,6 +293,9 @@ export default function CoursesManagePage() {
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-xs text-[#64748b]">{review?.studentEmail} · {review?.practiceId || review?.handsonId}</p>
+            {review?.content && <p className="text-xs text-[#94a3b8] whitespace-pre-wrap max-h-32 overflow-y-auto rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-2">{review.content}</p>}
+            {review?.githubUrl && <p className="text-xs"><span className="text-[#64748b]">GitHub: </span><a href={review.githubUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline break-all">Open project ↗</a></p>}
+            {review?.liveUrl && <p className="text-xs"><span className="text-[#64748b]">Live: </span><a href={review.liveUrl} target="_blank" rel="noopener noreferrer" className="text-[#00d9ff] underline break-all">Open live site ↗</a></p>}
             <div>
               <Label className="text-white">Status</Label>
               <Select value={reviewStatus} onValueChange={setReviewStatus}>
@@ -347,6 +352,10 @@ export default function CoursesManagePage() {
                 <Label className="text-white">Target Qs</Label>
                 <Input value={testForm.questionCount ?? ""} onChange={(e) => setTestForm((f) => ({ ...f, questionCount: e.target.value }))} type="number" min={1} className="border-[#1e293b] bg-[#0a0f1e] mt-1" />
               </div>
+            </div>
+            <div>
+              <Label className="text-white">Test date (daily test day, optional)</Label>
+              <Input value={testForm.scheduledDate || ""} onChange={(e) => setTestForm((f) => ({ ...f, scheduledDate: e.target.value }))} type="date" className="border-[#1e293b] bg-[#0a0f1e] mt-1 max-w-xs" />
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-[#94a3b8]">
               {[["shuffleQuestions", "Shuffle questions"], ["shuffleOptions", "Shuffle options"]].map(([key, label]) => (

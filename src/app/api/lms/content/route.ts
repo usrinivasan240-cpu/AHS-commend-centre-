@@ -136,6 +136,13 @@ export async function POST(req: NextRequest) {
     if (typeof payload.status === "string" && payload.status !== "draft" && payload.status !== "published") {
       return NextResponse.json({ error: "Invalid doc.status (draft|published)" }, { status: 400 });
     }
+    // Daily-test date must be a real calendar date (YYYY-MM-DD) when provided.
+    if (kind === "tests" && payload.scheduledDate !== undefined) {
+      const sd = payload.scheduledDate;
+      if (typeof sd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(sd) || Number.isNaN(Date.parse(sd))) {
+        return NextResponse.json({ error: "Invalid doc.scheduledDate (YYYY-MM-DD)" }, { status: 400 });
+      }
+    }
     const now = serverTimestamp();
     const ref = db.collection(collectionFor(kind)).doc(rawId);
     const exists = (await ref.get()).exists;
