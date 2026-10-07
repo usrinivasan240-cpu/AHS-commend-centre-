@@ -59,6 +59,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ attempt: { id: d.id, ...(d.data() as object) }, resumed: true });
       }
 
+      // Schedule gate: a dated test cannot be started before its day (ISO dates compare lexicographically).
+      const scheduled = typeof test.scheduledDate === "string" ? test.scheduledDate.trim() : "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(scheduled)) {
+        const today = serverTimestamp().slice(0, 10);
+        if (scheduled > today) {
+          return NextResponse.json(
+            { error: `This test unlocks on ${scheduled}.`, unlockDate: scheduled },
+            { status: 409 }
+          );
+        }
+      }
+
       // Attempt-limit guard (default 1 per master spec).
       const maxAttempts = typeof test.maxAttempts === "number" ? test.maxAttempts : 1;
       const closedSnap = await db

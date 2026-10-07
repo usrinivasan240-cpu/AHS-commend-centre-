@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, Award, Loader2, RefreshCw, RotateCcw, Users } from "lucide-react";
+import { Activity, Award, ClipboardCheck, Loader2, RefreshCw, RotateCcw, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ export default function MonitoringPage() {
   const [attempts, setAttempts] = useState<Doc[]>([]);
   const [progress, setProgress] = useState<Doc[]>([]);
   const [submissions, setSubmissions] = useState<Doc[]>([]);
+  const [tests, setTests] = useState<Doc[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [events, setEvents] = useState<Doc[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -43,20 +44,23 @@ export default function MonitoringPage() {
   const [resetTarget, setResetTarget] = useState<Doc | null>(null);
   const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState("");
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const load = useCallback(async () => {
     if (!actorEmail) { setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
-      const [a, p, s] = await Promise.all([
+      const [a, p, s, c] = await Promise.all([
         lmsGet<Doc>("/api/lms/attempts", actorEmail, { courseId: LMS_COURSE_ID }),
         lmsGet<Doc>("/api/lms/progress", actorEmail, { courseId: LMS_COURSE_ID }),
         lmsGet<Doc>("/api/lms/submissions", actorEmail, { courseId: LMS_COURSE_ID }),
+        lmsGet<Doc>("/api/lms/content", actorEmail, { courseId: LMS_COURSE_ID }),
       ]);
       setAttempts(a.attempts || []);
       setProgress(p.progress || []);
       setSubmissions(s.submissions || []);
+      setTests(c.tests || []);
     } catch (e: any) {
       setError(e.message || "Failed to load");
     }
@@ -141,6 +145,36 @@ export default function MonitoringPage() {
 
   const selectedAttempt = attempts.find((a) => a.id === selected);
   const flagCount = events.filter((e) => FLAG_KINDS.includes(e.kind)).length;
+
+  // Daily compliance: for each due dated test, who submitted / is trying / missed.
+  const compliance = useMemo(() => {
+    const dated = tests
+      .filter((t) => t.scheduledDate && t.scheduledDate <= todayStr)
+      .sort((a, b) => String(b.scheduledDate).localeCompare(String(a.scheduledDate)));
+    const emails = Array.from(new Set([
+      ...progress.map((p) => p.studentEmail),
+      ...attempts.map((a) => a.studentEmail),
+    ].filter(Boolean))).sort() as string[];
+    return dated.map((t) => {
+      const byStudent: Record<string, { status: string; score: number | null }> = {};
+      for (const a of attempts.filter((x) => x.testId === t.id && x.studentEmail)) {
+        const cur = byStudent[a.studentEmail];
+        const score = typeof a.scorePercent === "number" ? a.scorePercent : null;
+        if (!cur || (cur.status === "in_progress" && a.status !== "in_progress")) {
+          byStudent[a.studentEmail] = { status: a.status, score };
+        }
+      }
+      const done = Object.entries(byStudent)
+        .filter(([, v]) => v.status !== "in_progress")
+        .map(([email, v]) => ({ email, score: v.score }));
+      const inProg = Object.entries(byStudent)
+        .filter(([, v]) => v.status === "in_progress")
+        .map(([email]) => email);
+      const seen = new Set(Object.keys(byStudent));
+      const missed = emails.filter((e) => !seen.has(e));
+      return { test: t, done, inProg, missed };
+    });
+  }, [tests, progress, attempts, todayStr]);
 
   // Per-student analysis: roster from everyone with progress or attempts.
   const roster = useMemo(() => {
@@ -227,6 +261,33 @@ export default function MonitoringPage() {
           </Card>
         ))}
       </div>
+
+      <Card className="border-[#1e293b] bg-[#0f172a]">
+        <CardContent className="p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ClipboardCheck className="h-4 w-4" /> Daily test compliance</h3>
+          {compliance.map((c) => (
+            <div key={c.test.id} className="rounded-lg border border-[#1e293b] bg-[#0a0f1e] px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-white">{c.test.scheduledDate} — {c.test.title || c.test.id}</p>
+                <p className="text-xs text-[#64748b]">
+                  <span className="text-emerald-400">{c.done.length} done</span>
+                  {c.inProg.length > 0 && <> · <span className="text-[#00d9ff]">{c.inProg.length} trying</span></>}
+                  {c.missed.length > 0 && <> · <span className="text-amber-300">{c.missed.length} missed</span></>}
+                </p>
+              </div>
+              {c.done.length > 0 && (
+                <p className="mt-1 text-[11px] text-[#64748b]">
+                  {c.done.map((d) => `${d.email}${d.score != null ? ` (${d.score}%)` : ""}`).join(" · ")}
+                </p>
+              )}
+              {c.missed.length > 0 && (
+                <p className="mt-1 text-[11px] text-amber-300/80">Missed: {c.missed.join(" · ")}</p>
+              )}
+            </div>
+          ))}
+          {compliance.length === 0 && <p className="text-sm text-[#64748b]">No dated tests due yet. Set a date on a test to track compliance.</p>}
+        </CardContent>
+      </Card>
 
       <Card className="border-[#1e293b] bg-[#0f172a]">
         <CardContent className="p-4 space-y-2">

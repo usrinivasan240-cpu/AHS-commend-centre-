@@ -195,6 +195,30 @@ export default function LearnPage() {
     setStarting(false);
   };
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const latestFor = (testId: string) =>
+    attempts
+      .filter((a) => a.testId === testId)
+      .sort((x, y) => String(y.submittedAt || y.startedAt || "").localeCompare(String(x.submittedAt || x.startedAt || "")))[0];
+  const beginTest = (t: Doc) => {
+    const latest = latestFor(t.id);
+    if (latest?.status === "in_progress") {
+      setRunner({ attempt: latest, test: t });
+    } else {
+      setStartError("");
+      setConfirmTest(t);
+    }
+  };
+  // "Today's Test" protocol: dated tests surface by schedule state.
+  const scheduleGroups = useMemo(() => {
+    const tests = tree?.tests || [];
+    const closedIds = new Set(attempts.filter((a) => a.status !== "in_progress").map((a) => a.testId));
+    return {
+      todays: tests.filter((t: Doc) => t.scheduledDate === todayStr),
+      missed: tests.filter((t: Doc) => t.scheduledDate && t.scheduledDate < todayStr && !closedIds.has(t.id)),
+    };
+  }, [tree, attempts, todayStr]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -380,13 +404,58 @@ export default function LearnPage() {
           </TabsContent>
 
           <TabsContent value="tests" className="space-y-3 mt-4">
+            {scheduleGroups.todays.length > 0 && (
+              <Card className="border-[#0066ff] bg-[#0066ff]/10">
+                <CardContent className="p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#0066ff]">Today&apos;s test</p>
+                  {scheduleGroups.todays.map((t: Doc) => {
+                    const latest = latestFor(t.id);
+                    const closedCount = attempts.filter((a) => a.testId === t.id && a.status !== "in_progress").length;
+                    const limitReached = closedCount >= (t.maxAttempts ?? 1);
+                    return (
+                      <div key={t.id} className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-white">{t.id} — {t.title}</p>
+                          <p className="text-xs text-[#64748b]">
+                            {(t.questions || []).length} questions · {t.timeLimitMinutes || t.durationMinutes || 20} min · pass {t.passPercent || 60}%
+                            {latest?.scorePercent != null && <span className="text-white"> · best {latest.scorePercent}%</span>}
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => beginTest(t)}
+                          disabled={limitReached && latest?.status !== "in_progress"}
+                          className="bg-[#0066ff] hover:bg-[#0052cc] text-white"
+                        >
+                          <Play className="mr-2 h-4 w-4" /> {latest?.status === "in_progress" ? "Resume" : limitReached ? "Done" : "Start now"}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            )}
+            {scheduleGroups.missed.length > 0 && (
+              <Card className="border-[#f59e0b]/50 bg-[#f59e0b]/5">
+                <CardContent className="p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#f59e0b]">Missed ({scheduleGroups.missed.length})</p>
+                  {scheduleGroups.missed.map((t: Doc) => (
+                    <div key={t.id} className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm text-white">{t.id} — {t.title} <span className="text-xs text-[#64748b]">· was due {t.scheduledDate}</span></p>
+                      <Button size="sm" variant="outline" onClick={() => beginTest(t)}>Attempt late</Button>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             {(tree?.tests || []).map((t: Doc) => {
               const att = attempts.filter((a) => a.testId === t.id).sort((x, y) =>
                 String(y.submittedAt || y.startedAt || "").localeCompare(String(x.submittedAt || x.startedAt || "")));
               const latest = att[0];
               const closedCount = att.filter((a) => a.status !== "in_progress").length;
               const limitReached = closedCount >= (t.maxAttempts ?? 1);
-              const isToday = t.scheduledDate ? t.scheduledDate === new Date().toISOString().slice(0, 10) : false;
+              const isToday = t.scheduledDate ? t.scheduledDate === todayStr : false;
+              const locked = t.scheduledDate ? t.scheduledDate > todayStr : false;
+              const missed = t.scheduledDate ? t.scheduledDate < todayStr && closedCount === 0 : false;
               return (
                 <Card key={t.id} className="border-[#1e293b] bg-[#0f172a]">
                   <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
@@ -395,6 +464,8 @@ export default function LearnPage() {
                         {t.id} — {t.title}{" "}
                         {t.scheduledDate && <span className="text-xs font-normal text-[#64748b]">· {t.scheduledDate}</span>}{" "}
                         {isToday && <Badge variant="success" className="ml-1">Today&apos;s test</Badge>}
+                        {locked && <Badge variant="warning" className="ml-1">Unlocks {t.scheduledDate}</Badge>}
+                        {missed && <Badge variant="warning" className="ml-1">Missed</Badge>}
                       </p>
                       <p className="text-xs text-[#64748b]">
                         {(t.questions || []).length} questions shown · {t.timeLimitMinutes || t.durationMinutes || 20} min · pass {t.passPercent || 60}% · {closedCount}/{t.maxAttempts ?? 1} attempts used
@@ -408,18 +479,11 @@ export default function LearnPage() {
                       )}
                     </div>
                     <Button
-                      onClick={() => {
-                        if (latest?.status === "in_progress") {
-                          setRunner({ attempt: latest, test: t });
-                        } else {
-                          setStartError("");
-                          setConfirmTest(t);
-                        }
-                      }}
-                      disabled={limitReached && latest?.status !== "in_progress"}
+                      onClick={() => beginTest(t)}
+                      disabled={locked || (limitReached && latest?.status !== "in_progress")}
                       className="bg-[#0066ff] hover:bg-[#0052cc] text-white"
                     >
-                      <Play className="mr-2 h-4 w-4" /> {latest?.status === "in_progress" ? "Resume" : limitReached ? "Limit reached" : "Start"}
+                      <Play className="mr-2 h-4 w-4" /> {locked ? `Unlocks ${t.scheduledDate}` : latest?.status === "in_progress" ? "Resume" : limitReached ? "Limit reached" : "Start"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -519,6 +583,12 @@ export default function LearnPage() {
           <p className="text-xs text-[#64748b]">
             {(confirmTest?.questions || []).length} questions · {confirmTest?.timeLimitMinutes || 20} minutes · pass {confirmTest?.passPercent || 60}% · {(confirmTest?.maxAttempts ?? 1)} attempt(s) allowed.
           </p>
+          {confirmTest?.scheduledDate && (
+            <p className={`text-xs ${confirmTest.scheduledDate < todayStr ? "text-amber-300" : "text-[#64748b]"}`}>
+              Scheduled {confirmTest.scheduledDate}
+              {confirmTest.scheduledDate < todayStr ? " — past due, this attempt counts as late." : confirmTest.scheduledDate === todayStr ? " — today's test." : ""}
+            </p>
+          )}
           {startError && (
             <p className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-2 text-xs text-[#ef4444]">{startError}</p>
           )}
