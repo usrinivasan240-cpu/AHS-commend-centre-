@@ -8,6 +8,7 @@ import {
   Plus,
   MoreHorizontal,
   Eye,
+  EyeOff,
   Pencil,
   Trash2,
   ArrowUpDown,
@@ -148,6 +149,7 @@ export default function PeoplePage() {
   const [error, setError] = useState("");
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetMsg, setResetMsg] = useState("");
 
   const { data: firestoreMembers, loading } = useFirestoreQuery(COLLECTIONS.USERS);
@@ -285,6 +287,7 @@ export default function PeoplePage() {
   const openReset = (member: typeof allMembers[number]) => {
     setSelectedMember(member);
     setResetPassword("");
+    setShowResetPassword(false);
     setResetMsg("");
     setResetOpen(true);
   };
@@ -881,12 +884,23 @@ export default function PeoplePage() {
               )}
               <div className="space-y-2">
                 <Label className="text-foreground">New password (min 6 characters)</Label>
-                <Input
-                  type="password"
-                  placeholder="Enter new password"
-                  value={resetPassword}
-                  onChange={(e) => setResetPassword(e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    type={showResetPassword ? "text" : "password"}
+                    placeholder="Enter new password"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+                    aria-label={showResetPassword ? "Hide password" : "Show password"}
+                  >
+                    {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
             </div>
             <DialogFooter>

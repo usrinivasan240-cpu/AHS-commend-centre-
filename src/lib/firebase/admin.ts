@@ -74,6 +74,21 @@ function getAdminApp(): App {
 // only env vars). Importing this module must never throw.
 export const getAdminDb = () => getFirestore(getAdminApp());
 
+// Raw service-account fields for REST callers that must NOT load
+// firebase-admin/* submodules (e.g. /auth pulls the ESM-only jose chain).
+// Same lookup as getServiceAccount(); throws when credentials are missing.
+export function getServiceAccountCreds(): { projectId: string; clientEmail: string; privateKey: string } {
+  const sa = getServiceAccount() as { project_id?: string; client_email?: string; private_key?: string };
+  if (!sa.private_key || !sa.client_email) {
+    throw new Error("Firebase Admin credentials missing.");
+  }
+  return {
+    projectId: String(sa.project_id || process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || ""),
+    clientEmail: String(sa.client_email),
+    privateKey: String(sa.private_key),
+  };
+}
+
 // Back-compat exports: null until first lazy init. Do NOT init here.
 export const adminDb = null as unknown as ReturnType<typeof getFirestore>;
 // getAdminAuth/adminAuth removed: firebase-admin/auth pulls an ESM-only

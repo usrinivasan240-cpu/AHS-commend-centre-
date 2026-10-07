@@ -10,30 +10,77 @@ async function dbOrThrow() {
   return getAdminDb();
 }
 
-// firebase-admin/auth is loaded dynamically (never at import time) to keep
-// the ESM-only chain (jwks-rsa -> jose) out of the module graph.
-async function authOrThrow() {
-  const { getApps, initializeApp, cert } = await import("firebase-admin/app");
-  const { getAuth } = await import("firebase-admin/auth");
-  if (getApps().length === 0) {
-    const { readFileSync, existsSync } = await import("fs");
-    const { join } = await import("path");
-    const local = join(process.cwd(), "serviceAccountKey.json");
-    if (existsSync(local)) {
-      initializeApp({ credential: cert(JSON.parse(readFileSync(local, "utf-8"))) });
-    } else {
-      const key = String(process.env.FIREBASE_ADMIN_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-      initializeApp({
-        credential: cert({
-          projectId:
-            process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-          privateKey: key,
-        } as Parameters<typeof cert>[0]),
-      });
-    }
+// firebase-admin/* submodules are NEVER loaded here — not even dynamically.
+// firebase-admin/auth pulls jwks-rsa -> jose (ESM-only), which crashes at
+// runtime on Vercel ("require() of ES Module ... not supported").
+// Password reset goes through the Identity Toolkit REST API using a
+// self-signed service-account JWT (node:crypto only) — no SDK involved.
+function base64url(input: string | Buffer): string {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function googleAccessToken(creds: { clientEmail: string; privateKey: string }): Promise<string> {
+  const { createSign } = await import("crypto");
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claim = base64url(
+    JSON.stringify({
+      iss: creds.clientEmail,
+      scope: "https://www.googleapis.com/auth/identitytoolkit",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    })
+  );
+  const unsigned = `${header}.${claim}`;
+  const signature = base64url(createSign("RSA-SHA256").update(unsigned).sign(creds.privateKey));
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: `${unsigned}.${signature}`,
+    }),
+  });
+  const data = (await res.json()) as { access_token?: string; error_description?: string };
+  if (!res.ok || !data.access_token) {
+    throw new Error(`Google auth failed: ${data.error_description || res.statusText}`);
   }
-  return getAuth();
+  return data.access_token;
+}
+
+async function findAuthUser(projectId: string, token: string, email: string): Promise<{ localId: string } | null> {
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:lookup`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: [email] }),
+    }
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { users?: Array<{ localId?: string }> };
+  const uid = data.users?.[0]?.localId;
+  return uid ? { localId: uid } : null;
+}
+
+async function setAuthPassword(projectId: string, token: string, uid: string, password: string): Promise<void> {
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:update`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ localId: uid, password, validSince: String(Math.floor(Date.now() / 1000)) }),
+    }
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(`Password update failed: ${data?.error?.message || res.statusText}`);
+  }
 }
 
 // GET /api/admin/users — super-admin only: list all user profiles.
@@ -71,19 +118,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "New password must be at least 6 characters" }, { status: 400 });
     }
 
-    const auth = await authOrThrow();
-    const user = await auth.getUserByEmail(email).catch(() => null);
-    if (!user) {
+    const { getServiceAccountCreds } = await import("@/lib/firebase/admin");
+    const creds = getServiceAccountCreds();
+    if (!creds.projectId) {
+      return NextResponse.json({ error: "FIREBASE_ADMIN_PROJECT_ID is not configured" }, { status: 500 });
+    }
+    const token = await googleAccessToken(creds);
+    const found = await findAuthUser(creds.projectId, token, email);
+    if (!found) {
       return NextResponse.json({ error: "No login account found for this email" }, { status: 404 });
     }
-    await auth.updateUser(user.uid, { password: newPassword });
+    await setAuthPassword(creds.projectId, token, found.localId, newPassword);
 
     await db.collection(COLLECTIONS.ACTIVITY_LOG).add({
       actorId: actor!.id,
       actorRole: actor!.role,
       action: "ADMIN_PASSWORD_RESET",
       targetType: "user",
-      targetId: user.uid,
+      targetId: found.localId,
       metadata: { email },
       createdAt: new Date().toISOString(),
     });
