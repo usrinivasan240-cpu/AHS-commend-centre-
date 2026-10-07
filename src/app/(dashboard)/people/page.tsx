@@ -151,6 +151,8 @@ export default function PeoplePage() {
   const [resetPassword, setResetPassword] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetMsg, setResetMsg] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   const { data: firestoreMembers, loading } = useFirestoreQuery(COLLECTIONS.USERS);
 
@@ -205,29 +207,55 @@ export default function PeoplePage() {
 
   const handleAddMember = async () => {
     // Access to this page is already gated by PermissionGuard (Manage Members).
-    // Do not store passwords in Firestore — create the login in Firebase
-    // Authentication and keep only the profile here.
+    // Never store passwords in Firestore — the login lives in Firebase
+    // Authentication and only the profile lives here.
     if (!form.name || !form.email || !form.role) {
       setError("Name, email, and role are required.");
+      return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+      setError("Set a login password (min 6 characters).");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      await firestoreAdd(COLLECTIONS.USERS, {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        team: form.team || null,
-        phone: form.phone || null,
-        skills: form.skills ? form.skills.split(",").map((s) => s.trim()) : [],
-        joinDate: form.joinDate,
-        status: form.status,
-        performanceScore: 0,
-        avatar: null,
+      // 1. Create the login first — fails fast on duplicate/invalid email.
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(user?.email ? { "x-actor-email": user.email } : {}),
+        },
+        body: JSON.stringify({ email: form.email, newPassword, create: true }),
       });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to create login for this email.");
+      }
+      // 2. Then save the profile.
+      try {
+        await firestoreAdd(COLLECTIONS.USERS, {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          team: form.team || null,
+          phone: form.phone || null,
+          skills: form.skills ? form.skills.split(",").map((s) => s.trim()) : [],
+          joinDate: form.joinDate,
+          status: form.status,
+          performanceScore: 0,
+          avatar: null,
+        });
+      } catch (profileErr) {
+        throw new Error(
+          `Login created, but profile save failed (${profileErr instanceof Error ? profileErr.message : "unknown error"}). The user can log in; re-add the profile or contact support.`
+        );
+      }
       setAddOpen(false);
       setForm(emptyForm);
+      setNewPassword("");
+      setShowNewPassword(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add member");
     } finally {
@@ -720,11 +748,31 @@ export default function PeoplePage() {
                   onChange={(e) => setForm({ ...form, skills: e.target.value })}
                 />
               </div>
-              <p className="text-xs text-muted">After adding, create the login for this email in Firebase Authentication.</p>
+
+              <div className="space-y-2">
+                <Label className="text-foreground">Login Password *</Label>
+                <div className="relative">
+                  <Input
+                    type={showNewPassword ? "text" : "password"}
+                    placeholder="Min 6 characters — user logs in with this"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted">The login is created together with the account — no extra step needed.</p>
+              </div>
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); }}>
+              <Button variant="outline" onClick={() => { setAddOpen(false); setError(""); setNewPassword(""); setShowNewPassword(false); }}>
                 Cancel
               </Button>
               <Button onClick={handleAddMember} loading={saving}>

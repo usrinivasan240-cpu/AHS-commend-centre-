@@ -90,7 +90,7 @@ async function createAuthUser(
   password: string
 ): Promise<{ localId: string }> {
   const res = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:create`,
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
