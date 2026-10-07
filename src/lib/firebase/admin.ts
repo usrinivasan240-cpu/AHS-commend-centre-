@@ -27,10 +27,29 @@ function getServiceAccount() {
   }
   // 2. Try env vars (required in production / Vercel).
   if (process.env.FIREBASE_ADMIN_PRIVATE_KEY && process.env.FIREBASE_ADMIN_CLIENT_EMAIL) {
+    // Normalize: dashboard pastes commonly arrive with surrounding quotes,
+    // literal \n sequences (sometimes double-escaped), or stray whitespace.
+    let key = String(process.env.FIREBASE_ADMIN_PRIVATE_KEY).trim();
+    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+      key = key.slice(1, -1).trim();
+    }
+    let prev = "";
+    while (prev !== key) {
+      prev = key;
+      // One or more backslashes + n -> newline (covers \n, \\n, \\\n ...).
+      // PEM/base64 never contains a literal backslash, so any backslash
+      // present is an escaping artifact: strip leftovers entirely.
+      key = key.replace(/\\+n/g, "\n").replace(/\\/g, "");
+    }
+    if (!key.includes("-----BEGIN PRIVATE KEY-----")) {
+      throw new Error(
+        "FIREBASE_ADMIN_PRIVATE_KEY is malformed (missing PEM header). Re-copy the full private_key from serviceAccountKey.json."
+      );
+    }
     return {
       project_id: process.env.FIREBASE_ADMIN_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      client_email: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-      private_key: process.env.FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      client_email: process.env.FIREBASE_ADMIN_CLIENT_EMAIL.trim(),
+      private_key: key,
     };
   }
   // 3. Fail closed — never fall back to an embedded key.
