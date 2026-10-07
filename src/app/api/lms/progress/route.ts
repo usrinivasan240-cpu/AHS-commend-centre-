@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
   try {
     const db = await dbOrThrow();
     const body = await req.json();
-    const actor = await requireActor(req, db, ["student"], body);
+    // Students, trainers and super-admins may track progress (trainers/admins preview as themselves).
+    const actor = await requireActor(req, db, ["student", "trainer", "super-admin"], body);
 
     const courseId = String(body.courseId || "").trim();
     if (!courseId) {

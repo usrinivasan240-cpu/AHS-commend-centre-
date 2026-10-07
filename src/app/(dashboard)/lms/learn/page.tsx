@@ -22,6 +22,14 @@ import { LMS_COURSE_ID, lmsGet, lmsPost } from "@/lib/lms/client";
 
 type Doc = Record<string, any>;
 
+const CRITERIA_LABELS: Record<string, string> = {
+  lessonsComplete: "Lessons",
+  practicesComplete: "Practices",
+  handsonsComplete: "Hands-on",
+  testsPassed: "Tests",
+  capstoneComplete: "Capstone",
+};
+
 const STRICT_TEXT = `STRICT TEST MODE
 
 Once you start this test:
@@ -263,7 +271,7 @@ export default function LearnPage() {
                 <Badge variant="success">Eligible — contact your trainer</Badge>
               ) : (
                 <p className="text-xs text-[#64748b]">
-                  {cert?.criteria ? Object.entries(cert.criteria).filter(([, v]) => !v).map(([k]) => k).join(", ") || "Complete all requirements" : "Complete all requirements"}
+                  {cert?.criteria ? Object.entries(cert.criteria).filter(([, v]) => !v).map(([k]) => CRITERIA_LABELS[k] || k).join(", ") || "Complete all requirements" : "Complete all requirements"}
                 </p>
               )}
             </div>

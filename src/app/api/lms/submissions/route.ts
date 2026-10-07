@@ -94,7 +94,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const actor = await requireActor(req, db, ["student"], body);
+    // Students, trainers and super-admins may submit (trainers/admins preview as themselves).
+    const actor = await requireActor(req, db, ["student", "trainer", "super-admin"], body);
     const courseId = String(body.courseId || "").trim();
     const content = String(body.content || "");
     if (!courseId || !content.trim()) {
