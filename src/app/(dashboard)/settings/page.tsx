@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { changeOwnPassword } from "@/lib/firebase/auth";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -148,6 +149,41 @@ export default function SettingsPage() {
   });
 
   const [twoFactor, setTwoFactor] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+
+  const handlePasswordChange = async () => {
+    setPwMsg("");
+    setPwErr("");
+    if (!pwCurrent || !pwNew || !pwConfirm) {
+      setPwErr("Fill in all three password fields.");
+      return;
+    }
+    if (pwNew !== pwConfirm) {
+      setPwErr("New password and confirmation do not match.");
+      return;
+    }
+    if (pwNew === pwCurrent) {
+      setPwErr("New password must be different from the current one.");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await changeOwnPassword(pwCurrent, pwNew);
+      setPwMsg("Password updated. Use the new password next time you log in.");
+      setPwCurrent("");
+      setPwNew("");
+      setPwConfirm("");
+    } catch (err) {
+      setPwErr(err instanceof Error ? err.message : "Could not update password.");
+    } finally {
+      setPwSaving(false);
+    }
+  };
 
   const updateNotifPref = (key: keyof typeof notificationPrefs) => {
     setNotificationPrefs((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -715,6 +751,16 @@ export default function SettingsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {pwErr && (
+                    <div className="rounded-lg bg-danger/10 border border-danger/30 p-3 text-sm text-danger">
+                      {pwErr}
+                    </div>
+                  )}
+                  {pwMsg && (
+                    <div className="rounded-lg bg-success/10 border border-success/30 p-3 text-sm text-success">
+                      {pwMsg}
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="space-y-2">
                       <Label htmlFor="currentPassword">
@@ -724,6 +770,8 @@ export default function SettingsPage() {
                         id="currentPassword"
                         type="password"
                         placeholder="Enter current password"
+                        value={pwCurrent}
+                        onChange={(e) => setPwCurrent(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
@@ -732,6 +780,8 @@ export default function SettingsPage() {
                         id="newPassword"
                         type="password"
                         placeholder="Enter new password"
+                        value={pwNew}
+                        onChange={(e) => setPwNew(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
@@ -742,11 +792,13 @@ export default function SettingsPage() {
                         id="confirmPassword"
                         type="password"
                         placeholder="Confirm new password"
+                        value={pwConfirm}
+                        onChange={(e) => setPwConfirm(e.target.value)}
                       />
                     </div>
                   </div>
                   <div className="flex justify-end">
-                    <Button variant="default" className="gap-2" onClick={() => alert('Password updated!')}>
+                    <Button variant="default" className="gap-2" onClick={handlePasswordChange} loading={pwSaving}>
                       <Key className="h-4 w-4" />
                       Update Password
                     </Button>
