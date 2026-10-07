@@ -33,8 +33,10 @@ export async function POST(req: NextRequest) {
     if (questions.length === 0) {
       return NextResponse.json({ error: "questions required (non-empty array)" }, { status: 400 });
     }
-    if (questions.length > 50) {
-      return NextResponse.json({ error: "max 50 questions per review" }, { status: 400 });
+    // Caps are env-tunable so limits can change without a redeploy of logic.
+    const maxQuestions = Math.max(1, Number(process.env.AI_REVIEW_MAX_QUESTIONS) || 50);
+    if (questions.length > maxQuestions) {
+      return NextResponse.json({ error: `max ${maxQuestions} questions per review` }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY || "";
@@ -58,15 +60,19 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = `You are a strict exam reviewer for a coding bootcamp. For each draft question, check: (1) the proposed answer is actually correct, (2) for mcq/msq every proposed answer matches one of the options exactly, (3) there are no duplicate or ambiguous options, (4) the kind fits (fill-in-the-blank style prompts should be "short"). Reply ONLY with a JSON array, one object per question in order: {"index": n, "ok": true|false, "fixedAnswerKeys": ["..."] (only if you change or fill a missing answer; must match options exactly for mcq/msq), "fixedKind": "mcq|msq|short|code" (only if the kind is wrong), "note": "one short sentence"}. No markdown, no code fences, just the JSON array.`;
 
+    // Model + tuning come from env so the backend can switch models without code changes.
+    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const temperature = Number(process.env.AI_REVIEW_TEMPERATURE ?? 0.1);
+    const maxOutputTokens = Number(process.env.AI_REVIEW_MAX_TOKENS) || 4096;
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ parts: [{ text: JSON.stringify(items) }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.1, maxOutputTokens: 4096 },
+          generationConfig: { responseMimeType: "application/json", temperature, maxOutputTokens },
         }),
       }
     );

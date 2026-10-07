@@ -19,6 +19,18 @@ export type ImportParseResult = {
   skipped: number;
 };
 
+/** Default points when a row has no usable points value — tunable via NEXT_PUBLIC_IMPORT_DEFAULT_POINTS. */
+export const DEFAULT_IMPORT_POINTS =
+  Number(process.env.NEXT_PUBLIC_IMPORT_DEFAULT_POINTS) > 0
+    ? Number(process.env.NEXT_PUBLIC_IMPORT_DEFAULT_POINTS)
+    : 5;
+
+/** Max questions the UI sends per AI-review call — mirrors server cap (AI_REVIEW_MAX_QUESTIONS). */
+export const IMPORT_REVIEW_BATCH =
+  Number(process.env.NEXT_PUBLIC_AI_REVIEW_MAX_QUESTIONS) > 0
+    ? Number(process.env.NEXT_PUBLIC_AI_REVIEW_MAX_QUESTIONS)
+    : 50;
+
 const KIND_ALIASES: { kind: LmsQuestionKind; match: string[] }[] = [
   { kind: "mcq", match: ["mcq", "multiple choice", "single choice", "single", "choose", "objective", "mcq-single"] },
   { kind: "msq", match: ["msq", "multiple select", "multi select", "multiple answers", "checkbox", "multi-select", "msq-multi"] },
@@ -142,7 +154,7 @@ export function rowsToQuestions(rows: string[][]): ImportParseResult {
 
     let points = Number(cell(r, map.points));
     if (!Number.isFinite(points) || points <= 0) {
-      points = 5;
+      points = DEFAULT_IMPORT_POINTS;
       corrected = true;
     }
 

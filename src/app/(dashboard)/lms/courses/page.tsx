@@ -19,7 +19,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { LMS_COURSE_ID, lmsGet, lmsPost } from "@/lib/lms/client";
 import { DEFAULT_STRICT } from "@/lib/lms/types";
-import { parseTestFile, rowsToQuestions, type ImportedQuestion } from "@/lib/lms/test-import";
+import { IMPORT_REVIEW_BATCH, parseTestFile, rowsToQuestions, type ImportedQuestion } from "@/lib/lms/test-import";
 
 type Doc = Record<string, any>;
 
@@ -51,6 +51,9 @@ export default function CoursesManagePage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importTitle, setImportTitle] = useState("");
   const [importDate, setImportDate] = useState("");
+  const [importMinutes, setImportMinutes] = useState("20");
+  const [importPass, setImportPass] = useState("60");
+  const [importAttempts, setImportAttempts] = useState("1");
   const [importRows, setImportRows] = useState<ImportedQuestion[]>([]);
   const [importSkipped, setImportSkipped] = useState(0);
   const [importError, setImportError] = useState("");
@@ -258,17 +261,27 @@ export default function CoursesManagePage() {
     setAiChecking(true);
     setAiNote("");
     try {
-      const res = await fetch("/api/ai/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-actor-email": actorEmail },
-        body: JSON.stringify({
-          actorEmail,
-          questions: importRows.map((q) => ({ prompt: q.prompt, kind: q.kind, options: q.options, answerKeys: q.answerKeys })),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "AI check failed");
-      const byIndex = new Map<number, Doc>((data.corrections || []).map((c: Doc) => [c.index, c]));
+      // Batch to the server cap so any size import can be checked.
+      const byIndex = new Map<number, Doc>();
+      let reviewed = 0;
+      for (let start = 0; start < importRows.length; start += IMPORT_REVIEW_BATCH) {
+        const batch = importRows.slice(start, start + IMPORT_REVIEW_BATCH);
+        const res = await fetch("/api/ai/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-actor-email": actorEmail },
+          body: JSON.stringify({
+            actorEmail,
+            questions: batch.map((q) => ({ prompt: q.prompt, kind: q.kind, options: q.options, answerKeys: q.answerKeys })),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "AI check failed");
+        for (const c of (data.corrections || []) as Doc[]) {
+          if (typeof c.index === "number") byIndex.set(start + c.index, c);
+        }
+        reviewed += batch.length;
+        setAiNote(`AI reviewing… ${reviewed}/${importRows.length}`);
+      }
       let fixed = 0;
       setImportRows((prev) =>
         prev.map((q, i) => {
@@ -298,6 +311,9 @@ export default function CoursesManagePage() {
       setImportError("Pick a valid test date (YYYY-MM-DD).");
       return;
     }
+    const minutes = Math.max(1, Number(importMinutes) || 20);
+    const pass = Math.min(100, Math.max(1, Number(importPass) || 60));
+    const attempts = Math.max(1, Number(importAttempts) || 1);
     setImporting(true);
     setImportError("");
     try {
@@ -308,10 +324,10 @@ export default function CoursesManagePage() {
         title: importTitle.trim(),
         status: publish ? "published" : "draft",
         mode: "exam",
-        timeLimitMinutes: 20,
-        passPercent: 60,
+        timeLimitMinutes: minutes,
+        passPercent: pass,
         questionCount: importRows.length,
-        maxAttempts: 1,
+        maxAttempts: attempts,
         scheduledDate: importDate,
         shuffleQuestions: true,
         shuffleOptions: true,
@@ -589,6 +605,18 @@ export default function CoursesManagePage() {
               <div>
                 <Label className="text-white">Test date</Label>
                 <Input value={importDate} onChange={(e) => setImportDate(e.target.value)} type="date" className="border-[#1e293b] bg-[#0a0f1e] mt-1" />
+              </div>
+              <div>
+                <Label className="text-white">Time limit (minutes)</Label>
+                <Input value={importMinutes} onChange={(e) => setImportMinutes(e.target.value)} type="number" min="1" className="border-[#1e293b] bg-[#0a0f1e] mt-1" />
+              </div>
+              <div>
+                <Label className="text-white">Pass %</Label>
+                <Input value={importPass} onChange={(e) => setImportPass(e.target.value)} type="number" min="1" max="100" className="border-[#1e293b] bg-[#0a0f1e] mt-1" />
+              </div>
+              <div>
+                <Label className="text-white">Max attempts</Label>
+                <Input value={importAttempts} onChange={(e) => setImportAttempts(e.target.value)} type="number" min="1" className="border-[#1e293b] bg-[#0a0f1e] mt-1" />
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
