@@ -292,7 +292,7 @@ export default function PeoplePage() {
     setResetOpen(true);
   };
 
-  const handleResetPassword = async () => {
+  const handleResetPassword = async (create = false) => {
     if (!selectedMember) return;
     if (resetPassword.length < 6) {
       setResetMsg("New password must be at least 6 characters.");
@@ -307,11 +307,26 @@ export default function PeoplePage() {
           "Content-Type": "application/json",
           ...(user?.email ? { "x-actor-email": user.email } : {}),
         },
-        body: JSON.stringify({ actorEmail: user?.email || "", email: selectedMember.email, newPassword: resetPassword }),
+        body: JSON.stringify({
+          actorEmail: user?.email || "",
+          email: selectedMember.email,
+          newPassword: resetPassword,
+          ...(create ? { create: true } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Password reset failed");
-      setResetMsg("ok:Password updated. Share the new password with the user securely.");
+      if (!res.ok) {
+        if (data.code === "NO_AUTH_ACCOUNT") {
+          setResetMsg("no-login:This member has no login account yet. Use “Create login” to give them one with this password.");
+          return;
+        }
+        throw new Error(data.error || "Password reset failed");
+      }
+      setResetMsg(
+        data.created
+          ? "ok:Login created. They can now sign in with this email + password."
+          : "ok:Password updated. Share the new password with the user securely."
+      );
       setResetPassword("");
     } catch (err) {
       setResetMsg(err instanceof Error ? err.message : "Password reset failed");
@@ -878,8 +893,8 @@ export default function PeoplePage() {
             </DialogHeader>
             <div className="space-y-4 py-2">
               {resetMsg && (
-                <div className={`rounded-lg border p-3 text-sm ${resetMsg.startsWith("ok:") ? "bg-success/10 border-success/30 text-success" : "bg-danger/10 border-danger/30 text-danger"}`}>
-                  {resetMsg.startsWith("ok:") ? resetMsg.slice(3) : resetMsg}
+                <div className={`rounded-lg border p-3 text-sm ${resetMsg.startsWith("ok:") ? "bg-success/10 border-success/30 text-success" : resetMsg.startsWith("no-login:") ? "bg-warning/10 border-warning/30 text-warning" : "bg-danger/10 border-danger/30 text-danger"}`}>
+                  {resetMsg.startsWith("ok:") ? resetMsg.slice(3) : resetMsg.startsWith("no-login:") ? resetMsg.slice(9) : resetMsg}
                 </div>
               )}
               <div className="space-y-2">
@@ -907,8 +922,14 @@ export default function PeoplePage() {
               <Button variant="outline" onClick={() => setResetOpen(false)}>
                 {resetMsg.startsWith("ok:") ? "Close" : "Cancel"}
               </Button>
-              {!resetMsg.startsWith("ok:") && (
-                <Button onClick={handleResetPassword} loading={saving}>
+              {!resetMsg.startsWith("ok:") && resetMsg.startsWith("no-login:") && (
+                <Button onClick={() => handleResetPassword(true)} loading={saving}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Create Login
+                </Button>
+              )}
+              {!resetMsg.startsWith("ok:") && !resetMsg.startsWith("no-login:") && (
+                <Button onClick={() => handleResetPassword(false)} loading={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   Set Password
                 </Button>

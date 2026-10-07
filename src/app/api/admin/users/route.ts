@@ -83,6 +83,30 @@ async function setAuthPassword(projectId: string, token: string, uid: string, pa
   }
 }
 
+async function createAuthUser(
+  projectId: string,
+  token: string,
+  email: string,
+  password: string
+): Promise<{ localId: string }> {
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:create`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, emailVerified: false, disabled: false }),
+    }
+  );
+  const data = (await res.json().catch(() => null)) as {
+    localId?: string;
+    error?: { message?: string };
+  } | null;
+  if (!res.ok || !data?.localId) {
+    throw new Error(`Account creation failed: ${data?.error?.message || res.statusText}`);
+  }
+  return { localId: data.localId };
+}
+
 // GET /api/admin/users — super-admin only: list all user profiles.
 export async function GET(req: NextRequest) {
   try {
@@ -101,8 +125,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/admin/users — super-admin only: reset any user's Auth password.
-// Body: { email, newPassword }
+// POST /api/admin/users — super-admin only: reset any user's Auth password,
+// or create their login if missing (body.create === true).
+// Body: { email, newPassword, create? }
 export async function POST(req: NextRequest) {
   try {
     const db = await dbOrThrow();
@@ -125,21 +150,31 @@ export async function POST(req: NextRequest) {
     }
     const token = await googleAccessToken(creds);
     const found = await findAuthUser(creds.projectId, token, email);
-    if (!found) {
-      return NextResponse.json({ error: "No login account found for this email" }, { status: 404 });
+    let uid = found?.localId;
+    let created = false;
+    if (!uid) {
+      if (body.create !== true) {
+        return NextResponse.json(
+          { error: "No login account found for this email", code: "NO_AUTH_ACCOUNT" },
+          { status: 404 }
+        );
+      }
+      uid = (await createAuthUser(creds.projectId, token, email, newPassword)).localId;
+      created = true;
+    } else {
+      await setAuthPassword(creds.projectId, token, uid, newPassword);
     }
-    await setAuthPassword(creds.projectId, token, found.localId, newPassword);
 
     await db.collection(COLLECTIONS.ACTIVITY_LOG).add({
       actorId: actor!.id,
       actorRole: actor!.role,
-      action: "ADMIN_PASSWORD_RESET",
+      action: created ? "ADMIN_LOGIN_CREATED" : "ADMIN_PASSWORD_RESET",
       targetType: "user",
-      targetId: found.localId,
+      targetId: uid,
       metadata: { email },
       createdAt: new Date().toISOString(),
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, created });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Password reset failed";
     const status = /Unauthorized/i.test(msg)
