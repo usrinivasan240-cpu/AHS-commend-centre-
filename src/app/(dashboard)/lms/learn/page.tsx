@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Award, BookOpen, CheckCircle2, ChevronRight, ClipboardCheck,
-  FlaskConical, GraduationCap, Hammer, Loader2, Play, Timer,
+  Award, CheckCircle2, ClipboardCheck,
+  GraduationCap, Loader2, Play, Timer,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,13 +53,6 @@ export default function LearnPage() {
   const [loading, setLoading] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
   const [error, setError] = useState("");
-  const [openModule, setOpenModule] = useState<string | null>(null);
-  const [submitTarget, setSubmitTarget] = useState<Doc | null>(null);
-  const [submitKind, setSubmitKind] = useState<"practice" | "handson">("practice");
-  const [submitText, setSubmitText] = useState("");
-  const [submitGithub, setSubmitGithub] = useState("");
-  const [submitLive, setSubmitLive] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [runner, setRunner] = useState<{ attempt: Doc; test: Doc } | null>(null);
   const [confirmTest, setConfirmTest] = useState<Doc | null>(null);
   const [starting, setStarting] = useState(false);
@@ -129,48 +122,6 @@ export default function LearnPage() {
       setError(e.message);
     }
     setEnrolling(false);
-  };
-
-  const markComplete = async (lessonId: string, moduleId: string) => {
-    try {
-      const res = await lmsPost<Doc>("/api/lms/progress", {
-        actorEmail, courseId: LMS_COURSE_ID, lessonId,
-        currentModuleId: moduleId,
-      });
-      setProgress(res.progress as Doc);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
-
-  const openSubmit = (doc: Doc, kind: "practice" | "handson") => {
-    setSubmitTarget(doc);
-    setSubmitKind(kind);
-    setSubmitText("");
-    setSubmitGithub("");
-    setSubmitLive("");
-  };
-
-  const doSubmitWork = async () => {
-    if (!submitTarget || !submitText.trim()) return;
-    setSubmitting(true);
-    try {
-      await lmsPost("/api/lms/submissions", {
-        actorEmail, courseId: LMS_COURSE_ID, content: submitText.trim(),
-        practiceId: submitKind === "practice" ? submitTarget.id : undefined,
-        handsonId: submitKind === "handson" ? submitTarget.id : undefined,
-        submissionType: submitTarget.submissionType || "TEXT",
-        githubUrl: submitGithub.trim() || undefined,
-        liveUrl: submitLive.trim() || undefined,
-        language: submitTarget.language || undefined,
-      });
-      setSubmitTarget(null);
-      const s = await lmsGet<Doc>("/api/lms/submissions", actorEmail, { courseId: LMS_COURSE_ID });
-      setSubmissions(s.submissions || []);
-    } catch (e: any) {
-      setError(e.message);
-    }
-    setSubmitting(false);
   };
 
   const confirmStartTest = async () => {
@@ -311,97 +262,11 @@ export default function LearnPage() {
           onExit={() => { setRunner(null); load(); }}
         />
       ) : (
-        <Tabs defaultValue="modules">
+        <Tabs defaultValue="tests">
           <TabsList className="border-[#1e293b] bg-[#0a0f1e]">
-            <TabsTrigger value="modules"><BookOpen className="mr-2 h-4 w-4" /> Modules</TabsTrigger>
             <TabsTrigger value="tests"><ClipboardCheck className="mr-2 h-4 w-4" /> Tests</TabsTrigger>
             <TabsTrigger value="results"><CheckCircle2 className="mr-2 h-4 w-4" /> My Results</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="modules" className="space-y-3 mt-4">
-            {moduleStats.map(({ module: m, lessons, practices, handsons, test, done, passed, complete }) => {
-              const open = openModule === m.id;
-              return (
-                <Card key={m.id} className="border-[#1e293b] bg-[#0f172a]">
-                  <CardContent className="p-0">
-                    <button
-                      onClick={() => setOpenModule(open ? null : m.id)}
-                      className="flex w-full items-center justify-between p-4 text-left"
-                    >
-                      <div>
-                        <p className="font-semibold text-white flex items-center gap-2">
-                          {m.order != null ? `${m.order}. ` : ""}{m.title}
-                          {complete && <Badge variant="success" className="text-[10px]">Completed</Badge>}
-                          {m.isCapstone && <Badge variant="info" className="text-[10px]">Capstone</Badge>}
-                        </p>
-                        <p className="text-xs text-[#64748b]">{lessons.length} lessons · {practices.length} practice · {handsons.length} hands-on{test ? " · 1 test" : ""} · {done}/{lessons.length} lessons done{test ? (passed ? " · test passed" : " · test pending") : ""}</p>
-                      </div>
-                      <ChevronRight className={`h-5 w-5 text-[#64748b] transition-transform ${open ? "rotate-90" : ""}`} />
-                    </button>
-                    {open && (
-                      <div className="space-y-2 border-t border-[#1e293b] p-4">
-                        {m.description && <p className="text-xs text-[#64748b]">{m.description}</p>}
-                        {lessons.map((l: Doc) => (
-                          <div key={l.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
-                            <div>
-                              <p className="text-sm font-medium text-white">{l.id} — {l.title}</p>
-                              {(l.topics || []).length > 0 && (
-                                <p className="text-xs text-[#64748b]">{(l.topics as string[]).join(" · ")}</p>
-                              )}
-                            </div>
-                            {completedSet.has(l.id) ? (
-                              <Badge variant="success">Done</Badge>
-                            ) : (
-                              <Button size="sm" variant="outline" onClick={() => markComplete(l.id, m.id)}>Mark complete</Button>
-                            )}
-                          </div>
-                        ))}
-                        {practices.map((p: Doc) => {
-                          const sub = submissions.find((s) => s.practiceId === p.id);
-                          return (
-                            <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#00d9ff]/20 bg-[#00d9ff]/5 p-3">
-                              <div className="flex items-center gap-2">
-                                <FlaskConical className="h-4 w-4 shrink-0 text-[#00d9ff]" />
-                                <div>
-                                  <p className="text-sm font-medium text-white">{p.id} — {p.title}</p>
-                                  {p.prompt && <p className="text-xs text-[#64748b] line-clamp-2">{p.prompt}</p>}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replaceAll("_", " ")}</Badge>}
-                                <Button size="sm" variant="outline" onClick={() => openSubmit(p, "practice")}>Submit work</Button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {handsons.map((h: Doc) => {
-                          const sub = submissions.find((s) => s.handsonId === h.id);
-                          return (
-                            <div key={h.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#7fff00]/20 bg-[#7fff00]/5 p-3">
-                              <div className="flex items-center gap-2">
-                                <Hammer className="h-4 w-4 shrink-0 text-[#7fff00]" />
-                                <div>
-                                  <p className="text-sm font-medium text-white">{h.id} — {h.title}</p>
-                                  {h.brief && <p className="text-xs text-[#64748b] line-clamp-2">{h.brief}</p>}
-                                  {(h.deliverables || []).length > 0 && (
-                                    <p className="text-[11px] text-[#00d9ff]">Deliverables: {(h.deliverables as string[]).join(", ")}</p>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {sub && <Badge variant={sub.status === "reviewed" ? "success" : "secondary"} className="text-[10px]">{String(sub.status).replaceAll("_", " ")}</Badge>}
-                                <Button size="sm" variant="outline" onClick={() => openSubmit(h, "handson")}>Submit work</Button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </TabsContent>
 
           <TabsContent value="tests" className="space-y-3 mt-4">
             {scheduleGroups.todays.length > 0 && (
@@ -532,47 +397,6 @@ export default function LearnPage() {
           </TabsContent>
         </Tabs>
       )}
-
-      <Dialog open={!!submitTarget} onOpenChange={(o) => { if (!o) setSubmitTarget(null); }}>
-        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-white">Submit {submitKind === "practice" ? "practice" : "hands-on"} work</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-[#94a3b8]">{submitTarget?.id} — {submitTarget?.title}</p>
-            {submitTarget?.prompt && <p className="text-xs text-[#64748b]">{submitTarget.prompt}</p>}
-            {submitTarget?.brief && <p className="text-xs text-[#64748b]">{submitTarget.brief}</p>}
-            <div>
-              <Label className="text-white">Your work ({submitTarget?.submissionType || "TEXT"})</Label>
-              <Textarea
-                value={submitText}
-                onChange={(e) => setSubmitText(e.target.value)}
-                rows={6}
-                className="border-[#1e293b] bg-[#0a0f1e] mt-1"
-                placeholder="Paste your solution, explanation or code here..."
-              />
-            </div>
-            {submitKind === "handson" && (
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <Label className="text-white">GitHub URL</Label>
-                  <Input value={submitGithub} onChange={(e) => setSubmitGithub(e.target.value)} className="border-[#1e293b] bg-[#0a0f1e] mt-1" placeholder="https://github.com/..." />
-                </div>
-                <div>
-                  <Label className="text-white">Live URL</Label>
-                  <Input value={submitLive} onChange={(e) => setSubmitLive(e.target.value)} className="border-[#1e293b] bg-[#0a0f1e] mt-1" placeholder="https://..." />
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSubmitTarget(null)}>Cancel</Button>
-            <Button onClick={doSubmitWork} disabled={submitting || !submitText.trim()} className="bg-[#0066ff] hover:bg-[#0052cc] text-white">
-              {submitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</> : "Submit"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!confirmTest} onOpenChange={(o) => { if (!o) setConfirmTest(null); }}>
         <DialogContent className="border-[#f59e0b]/40 bg-[#0f172a] max-w-md">
