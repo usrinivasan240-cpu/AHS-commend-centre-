@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Award, CheckCircle2, ClipboardCheck,
+  Award, Bell, CheckCircle2, ClipboardCheck,
   GraduationCap, Loader2, Play, Timer,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -57,6 +57,8 @@ export default function LearnPage() {
   const [confirmTest, setConfirmTest] = useState<Doc | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState("");
+  const [tab, setTab] = useState("tests");
+  const [notifs, setNotifs] = useState<Doc[]>([]);
 
   const load = useCallback(async () => {
     if (!actorEmail) { setLoading(false); return; }
@@ -76,6 +78,10 @@ export default function LearnPage() {
       setAttempts((a.attempts as Doc[]) || []);
       setSubmissions((s.submissions as Doc[]) || []);
       setCert(c);
+      // Test-publish notifications are best-effort — never fail the page.
+      lmsGet<Doc>("/api/lms/notifications", actorEmail, { unread: "1", limit: "10" })
+        .then((n) => setNotifs(n.notifications || []))
+        .catch(() => {});
     } catch (e: any) {
       setError(e.message || "Failed to load course");
     }
@@ -170,6 +176,14 @@ export default function LearnPage() {
     };
   }, [tree, attempts, todayStr]);
 
+  const openNotif = async (n: Doc) => {
+    setTab("tests");
+    setNotifs((prev) => prev.filter((x) => x.id !== n.id));
+    try {
+      await lmsPost<Doc>("/api/lms/notifications", { actorEmail, action: "read", id: n.id });
+    } catch { /* banner already dismissed */ }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -199,6 +213,25 @@ export default function LearnPage() {
 
       {error && (
         <div className="rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/10 p-3 text-sm text-[#ef4444]">{error}</div>
+      )}
+
+      {notifs.length > 0 && (
+        <div className="space-y-2">
+          {notifs.map((n) => (
+            <div key={n.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#0066ff]/40 bg-[#0066ff]/10 p-3">
+              <div className="flex items-center gap-3">
+                <Bell className="h-5 w-5 text-[#0066ff] shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-white">{n.title || "New test published"}</p>
+                  <p className="text-xs text-[#94a3b8]">{n.message || "Open the Tests tab to attend."}</p>
+                </div>
+              </div>
+              <Button size="sm" onClick={() => openNotif(n)} className="bg-[#0066ff] hover:bg-[#0052cc] text-white">
+                View test
+              </Button>
+            </div>
+          ))}
+        </div>
       )}
 
       {!progress && !loading && (
@@ -262,7 +295,7 @@ export default function LearnPage() {
           onExit={() => { setRunner(null); load(); }}
         />
       ) : (
-        <Tabs defaultValue="tests">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="border-[#1e293b] bg-[#0a0f1e]">
             <TabsTrigger value="tests"><ClipboardCheck className="mr-2 h-4 w-4" /> Tests</TabsTrigger>
             <TabsTrigger value="results"><CheckCircle2 className="mr-2 h-4 w-4" /> My Results</TabsTrigger>

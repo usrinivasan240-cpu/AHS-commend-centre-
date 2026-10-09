@@ -28,4 +28,17 @@ export async function lmsPost<T>(path: string, body: Record<string, unknown>): P
   return data as T;
 }
 
+export async function lmsDelete<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const actorEmail = typeof body.actorEmail === "string" ? body.actorEmail : "";
+  if (!actorEmail) throw new Error("Not authenticated — please sign in again");
+  const res = await fetch(path, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...actorHeaders(actorEmail) },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data as T;
+}
+
 export const LMS_COURSE_ID = "AHS-AI-BOOTCAMP";

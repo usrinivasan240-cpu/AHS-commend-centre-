@@ -17,7 +17,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/lib/auth-context";
-import { LMS_COURSE_ID, lmsGet, lmsPost } from "@/lib/lms/client";
+import { LMS_COURSE_ID, lmsDelete, lmsGet, lmsPost } from "@/lib/lms/client";
 import { DEFAULT_STRICT } from "@/lib/lms/types";
 import { IMPORT_REVIEW_BATCH, parseTestFile, rowsToQuestions, type ImportedQuestion } from "@/lib/lms/test-import";
 
@@ -60,6 +60,50 @@ export default function CoursesManagePage() {
   const [importing, setImporting] = useState(false);
   const [aiChecking, setAiChecking] = useState(false);
   const [aiNote, setAiNote] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ all: boolean; id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  // Children counts for the delete confirm dialog (computed from the loaded tree).
+  const deleteCounts = (moduleId: string | null) => {
+    const kids = (kind: string) =>
+      (tree?.[kind] || []).filter((d: Doc) => (moduleId === null ? true : d.moduleId === moduleId)).length;
+    return {
+      lessons: kids("lessons"),
+      practices: kids("practices"),
+      handsons: kids("handsons"),
+      tests: kids("tests"),
+    };
+  };
+
+  const openDeleteModule = (doc: Doc) => {
+    setDeleteError("");
+    setDeleteTarget({ all: false, id: doc.id, title: doc.title || doc.id });
+  };
+
+  const openDeleteAllModules = () => {
+    setDeleteError("");
+    setDeleteTarget({ all: true, id: "", title: "every module" });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await lmsDelete<Doc>("/api/lms/content", {
+        actorEmail,
+        kind: "modules",
+        courseId: LMS_COURSE_ID,
+        ...(deleteTarget.all ? { deleteAll: "1" } : { id: deleteTarget.id }),
+      });
+      setDeleteTarget(null);
+      await load();
+    } catch (e: any) {
+      setDeleteError(e.message || "Failed to delete");
+    }
+    setDeleting(false);
+  };
 
   const openImport = () => {
     setImportTitle(`Daily Test - ${todayStr()}`);
@@ -392,11 +436,18 @@ export default function CoursesManagePage() {
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-white capitalize">{kind} ({(tree?.[kind] || []).length})</h3>
-                  {kind === "tests" && (
-                    <Button size="sm" variant="outline" onClick={openImport}>
-                      <FileUp className="mr-1 h-3 w-3" /> Import daily test
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {kind === "tests" && (
+                      <Button size="sm" variant="outline" onClick={openImport}>
+                        <FileUp className="mr-1 h-3 w-3" /> Import daily test
+                      </Button>
+                    )}
+                    {kind === "modules" && (tree?.modules || []).length > 0 && (
+                      <Button size="sm" variant="outline" onClick={openDeleteAllModules} className="text-[#ef4444] border-[#ef4444]/30 hover:bg-[#ef4444]/10">
+                        <Trash2 className="mr-1 h-3 w-3" /> Delete all
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {(tree?.[kind] || []).map((d: Doc) => (
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#1e293b] bg-[#0a0f1e] p-3">
@@ -419,6 +470,11 @@ export default function CoursesManagePage() {
                       <Button size="sm" variant="outline" onClick={() => toggleStatus(kind, d)}>
                         {d.status === "published" ? <><EyeOff className="mr-1 h-3 w-3" /> Unpublish</> : <><Eye className="mr-1 h-3 w-3" /> Publish</>}
                       </Button>
+                      {kind === "modules" && (
+                        <Button size="sm" variant="outline" onClick={() => openDeleteModule(d)} className="text-[#ef4444] border-[#ef4444]/30 hover:bg-[#ef4444]/10">
+                          <Trash2 className="mr-1 h-3 w-3" /> Delete
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -664,6 +720,38 @@ export default function CoursesManagePage() {
             </Button>
             <Button onClick={() => createImportedTest(true)} disabled={importing || importRows.length === 0 || !importTitle.trim()} className="bg-[#0066ff] hover:bg-[#0052cc] text-white">
               {importing ? "Creating..." : "Create & publish"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null); }}>
+        <DialogContent className="border-[#1e293b] bg-[#0f172a] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              {deleteTarget?.all ? "Delete every module?" : `Delete “${deleteTarget?.title}”?`}
+            </DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const c = deleteCounts(deleteTarget?.all ? null : deleteTarget?.id || "");
+            const mods = deleteTarget?.all ? (tree?.modules || []).length : 1;
+            return (
+              <div className="space-y-2 py-2 text-sm text-[#94a3b8]">
+                <p>This permanently removes <span className="text-white font-medium">{mods} module{mods === 1 ? "" : "s"}</span> plus everything inside:</p>
+                <ul className="list-disc pl-5">
+                  <li>{c.lessons} lesson{c.lessons === 1 ? "" : "s"}</li>
+                  <li>{c.practices} practice{c.practices === 1 ? "" : "s"}</li>
+                  <li>{c.handsons} hands-on</li>
+                  <li>{c.tests} test{c.tests === 1 ? "" : "s"}</li>
+                </ul>
+                <p className="text-[#ef4444]">This cannot be undone.</p>
+                {deleteError && <p className="text-[#ef4444]">{deleteError}</p>}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button disabled={deleting} onClick={confirmDelete} className="bg-[#ef4444] text-white hover:bg-[#dc2626]">
+              {deleting ? "Deleting…" : "Yes, delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
